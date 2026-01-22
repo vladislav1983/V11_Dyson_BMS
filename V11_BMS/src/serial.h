@@ -22,8 +22,5 @@ If the byte 0x0F is 0x00, then the error state is OK.
 #define MSG_NUM_OFFSET 0x08
 #define MSG_ERR_CODE_OFFSET 0x0F
 
-void serial_init(void);
-
-size_t serial_get_next_block(uint8_t **);
-void serial_send_next_message(void);
-void serial_reset_message_counter(void);
+extern void serial_init(void);
+extern void serial_send(uint8_t* buff_ptr, uint8_t buff_size);

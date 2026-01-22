@@ -24,8 +24,11 @@
 #define TRIGGER_PRESSED_PIN PIN_PA04
 //Goes high when charger plugged in.
 #define CHARGER_CONNECTED_PIN PIN_PA06
+// vacuum modes button
+#define MODE_BUTTON           PIN_PA31
 
 //PA07 is attached to thermistor RT1
+//PA08 is attached to thermistor RT2
 
 //Some packs have Molicell INR18650P26a - datasheet https://www.molicel.com/wp-content/uploads/INR18650P26A-V2-80087.pdf
 #define CELL_LOWEST_DISCHARGE_VOLTAGE 2500	//mV - wont allow pack to discharge if any cells lower than this

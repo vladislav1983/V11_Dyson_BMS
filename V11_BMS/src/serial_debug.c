@@ -44,18 +44,15 @@ void serial_debug_init() {
 	config_usart.pinmux_pad3 = PINMUX_PA11C_SERCOM0_PAD3;
 		
 	//Init the UART
-	while (usart_init(&debug_usart,
-		SERCOM0, &config_usart) != STATUS_OK) {
+	while (usart_init(&debug_usart,SERCOM0, &config_usart) != STATUS_OK) {
 	}
 	//Enable
 	usart_enable(&debug_usart);
 	
 	//Initial debug blurb
-	serial_debug_send_message("Dyson V10 BMS Aftermarket firmware init\r\n");
-	serial_debug_send_message("(C) David Pye davidmpye@gmail.com\r\n");
-	serial_debug_send_message("GNU GPL v3.0 or later\r\n");
+	serial_debug_send_message("Dyson V11/V15 BMS After market firmware\r\n");
 	//Need to pause 250mS before cell voltages are available from the BQ7693
-	sw_timer_delay_ms(250);
+	sw_timer_delay_ms(300);
 	serial_debug_send_cell_voltages();
 #endif
 
@@ -78,7 +75,7 @@ void serial_debug_send_cell_voltages() {
 	uint16_t *cell_voltages = bq7693_get_cell_voltages();
 	serial_debug_send_message("Pack cell voltages:\r\n");
 	for (int i=0; i<7; ++i) {
-		sprintf(debug_msg_buffer, "Cell %d: %d mV, min %d mV, max %d mV\r\n", i, cell_voltages[i], CELL_LOWEST_DISCHARGE_VOLTAGE, CELL_FULL_CHARGE_VOLTAGE);
+		sprintf(debug_msg_buffer, "Cell %d: %d mV\r\n", i, cell_voltages[i]);
 		serial_debug_send_message(debug_msg_buffer);
 	}
 #endif

@@ -11,6 +11,7 @@
 #include "ntc.h"
 #include "crc32.h"
 #include "sw_timer.h"
+#include "protocol.h"
 
 //We start off idle.
 enum BMS_STATE bms_state = BMS_IDLE;
@@ -51,6 +52,17 @@ void pins_init()
 	sense_pin_config.input_pull = PORT_PIN_PULL_NONE;
 	port_pin_set_config(CHARGER_CONNECTED_PIN, &sense_pin_config);
 	port_pin_set_config(TRIGGER_PRESSED_PIN, &sense_pin_config);
+
+  // setup serial communication pullup enable pin
+  struct port_config io_port_config;
+  port_get_config_defaults(&io_port_config);
+  io_port_config.direction = PORT_PIN_DIR_OUTPUT;
+  port_pin_set_config(PIN_PA25, &io_port_config);
+  port_pin_set_output_level(PIN_PA25, true );
+
+  // setup mode button pullup voltage
+  port_pin_set_config(PIN_PA18, &io_port_config);
+  port_pin_set_output_level(PIN_PA18, true );
 }
 
 volatile int32_t currentmA;
@@ -167,9 +179,10 @@ void bms_init()
 	//Initialise the USART we need to talk to the vacuum cleaner
 	serial_init();	
 	
+  prot_init();
+
 	//Enable interrupts
 	interrupts_init();
-
 }
 	
 bool bms_is_safe_to_discharge() {
@@ -322,14 +335,18 @@ bool bms_is_pack_full() {
 }
 
 
-void bms_handle_idle() {
+void bms_handle_idle() 
+{
 	//Three potential ways out of this state - someone pulls the trigger, plugs in a charger, or the IDLE_TIME is exceeded and we go to sleep.
-	for (int i=0; i<  (IDLE_TIME * 1000) / 50; ++i) {
-		if (port_pin_get_input_level(CHARGER_CONNECTED_PIN) == true) {
+	for (int i=0; i<  (IDLE_TIME * 1000) / 50; ++i) 
+  {
+		if (port_pin_get_input_level(CHARGER_CONNECTED_PIN) == true) 
+    {
 			bms_state = BMS_CHARGER_CONNECTED;
 			return;
 		}
-		else if (port_pin_get_input_level(TRIGGER_PRESSED_PIN) == true) {
+		else if (port_pin_get_input_level(TRIGGER_PRESSED_PIN) == true) 
+    {
 			bms_state = BMS_TRIGGER_PULLED;
 			return;
 		}
@@ -340,13 +357,16 @@ void bms_handle_idle() {
 	bms_state = BMS_SLEEP;
 }
 
-void bms_handle_trigger_pulled() {
+void bms_handle_trigger_pulled() 
+{
 	//Check if it's safe to discharge or not.
-	if (bms_is_safe_to_discharge()) {
+	if (bms_is_safe_to_discharge()) 
+  {
 		//All go - unleash the power!
 		bms_state = BMS_DISCHARGING;
 	}
-	else {
+	else 
+  {
 		bms_state = BMS_FAULT;
 	}
 }
@@ -362,45 +382,61 @@ void bms_handle_sleep()
 	while(1);
 }
 
-void bms_handle_discharging(void) {		
-	
+static sw_timer bms_timer = 0;
+
+#ifdef SERIAL_DEBUG
+static sw_timer bms_debug_print_timer = 0;
+#endif
+
+void bms_handle_discharging(void) 
+{		
 #ifdef SERIAL_DEBUG
 	serial_debug_send_message("Starting discharge\r\n");
 #endif
 	
-	if (bms_is_safe_to_discharge()) {
+	if (bms_is_safe_to_discharge())
+   {
 		//Sanity check, hopefully already checked prior to here!
 		bq7693_enable_discharge();
-		//Reset the UART message counter;
-		serial_reset_message_counter();
-		//Brief pause to allow vac to wake up before we start sending serial data at it.
 	}
 	
-	while (1) {
-		
+	while (1) 
+  {
 #ifdef SERIAL_DEBUG
-		sprintf(debug_msg_buffer,"Discharging at %ld mA, %ld mAH, capacity %ld mAH, Temp %d'C\r\n", currentmA*-1, eeprom_data.current_charge_level/1000, eeprom_data.total_pack_capacity/1000,
-		bms_read_temperature()/10);
-		serial_debug_send_message(debug_msg_buffer);
+    if(false != sw_timer_is_elapsed(&bms_debug_print_timer, 250))
+    {
+      sw_timer_start(&bms_debug_print_timer);
+
+      sprintf(debug_msg_buffer,"Discharging at %ld mA, %ld mAH, capacity %ld mAH, Temp %d'C\r\n", currentmA*-1, eeprom_data.current_charge_level/1000, eeprom_data.total_pack_capacity/1000,
+      bms_read_temperature()/10);
+      serial_debug_send_message(debug_msg_buffer);
+    }
 #endif
-		if (!port_pin_get_input_level(TRIGGER_PRESSED_PIN)) {
-			//Trigger released.
-			bq7693_disable_discharge();
-			//Clear the battery status etc.
-			leds_off();
-			bms_state = BMS_IDLE;
-			return;
-		}
-		if (!bms_is_safe_to_discharge()) {
-			//A fault has occurred.
-			bq7693_disable_discharge();
-			bms_state = BMS_FAULT;
-			return;
-		}
-	
-		//Send the USART traffic we need to supply to keep the cleaner running
-		serial_send_next_message();
-		sw_timer_delay_ms(60);
+
+    if(false != sw_timer_is_elapsed(&bms_timer, 50))
+    {
+      sw_timer_start(&bms_timer);
+
+		  if (!port_pin_get_input_level(TRIGGER_PRESSED_PIN)) 
+      {
+			  //Trigger released.
+			  bq7693_disable_discharge();
+			  //Clear the battery status etc.
+			  leds_off();
+			  bms_state = BMS_IDLE;
+			  return;
+		  }
+		
+      if(!bms_is_safe_to_discharge()) 
+      {
+			  //A fault has occurred.
+			  bq7693_disable_discharge();
+			  bms_state = BMS_FAULT;
+			  return;
+		  }
+    }
+
+    prot_mainloop();
 	}
 }
 
@@ -625,6 +661,7 @@ void bms_mainloop()
 				bms_handle_charger_unplugged();
 				break;
 			case BMS_DISCHARGING:
+        prot_init();
 				bms_handle_discharging();
 				leds_blink_error_led(500);
         const uint8_t tst_vector[] = {0x12, 0x38, 0x00, 0xC1, 0x01, 0xC0, 0x02, 0x01, 0x07, 0x01, 0x10, 0x00, 0x81, 0x01, 0x00, 0x00, 0x01, 0x10, 0x01, 0x21, 0x01, 0x00, 0x00, 0x01, 0x10, 0x0D, 0x25, 0x02, 0x00, 0x03, 0x26, 0x01, 0x10, 0x02, 0x22, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x10, 0x05, 0x81, 0x02, 0x00, 0x67, 0x11, 0x01, 0x10, 0x06, 0x81, 0x01, 0x00, 0x01};

@@ -8,6 +8,9 @@
     INCLUDE FILES
 -----------------------------------------------------------------------------*/
 #include "protocol.h"
+#include "sw_timer.h"
+#include "string.h"
+#include "serial.h"
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL VARIABLES
@@ -27,14 +30,32 @@
 #define MSG_ROLLING_COUNTER_IDX         9
 #define MSG_DELIM_CHAR                  0x12
 #define CRC_SIZE                        4
-
+#define COMM_TIMEOUT                    (5 / SW_TIMER_TICK_MS)
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
 -----------------------------------------------------------------------------*/
+typedef enum
+{
+  PROT_WAIT_FRAME,
+  PROT_WAIT_HANDSHAKE_1,
+  PROT_WAIT_HANDSHAKE_2,
+  PROT_TX_HANDSHAKE,
+  PROT_MAIN,
+  PROT_WAIT_STATE,
+}prot_states;
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL VARIABLES
 -----------------------------------------------------------------------------*/
+static sw_timer com_timeout_timer = 0;
+static sw_timer wait_state_timer = 0;
+static sw_timer wait_state_timer_value = 0;
+static sw_timer valid_data_frame_timeout_timer = 0;
+
+uint8_t serial_buffer[64] = {0};
+static uint8_t serial_buffer_level = 0;
+static prot_states prot_state = PROT_WAIT_FRAME;
+static prot_states prot_state_next = PROT_WAIT_FRAME;
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
@@ -56,13 +77,127 @@ static const uint8_t msg_bms_chal_resp[]   = {0x12, 0x1B, 0x00, 0x5C, 0x01, 0xC0
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
 -----------------------------------------------------------------------------*/
+static bool prot_check_valid_handshake(uint8_t* frame_ptr, const uint8_t* handshake_ptr, uint8_t frame_size, uint8_t handshake_size);
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 //- **************************************************************************
+//! \brief
+//- **************************************************************************
+void prot_init(void)
+{
+  prot_state = PROT_WAIT_FRAME;
+  com_timeout_timer = 0;
+  wait_state_timer = 0;
+  wait_state_timer_value = 0;
+  valid_data_frame_timeout_timer = 0;
+  serial_buffer_level = 0;
+  sw_timer_start(&wait_state_timer);
+}
+
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
+void prot_mainloop(void)
+{
+  //uint8_t tx[sizeof(msg_vac_handshake_req_1)] = {0xFF};
+
+  if(false != sw_timer_is_elapsed(&wait_state_timer, 250))
+  {
+    //serial_send(tx, sizeof(tx));
+    sw_timer_start(&wait_state_timer);
+  }
+
+  return;
+
+  switch(prot_state)
+  {
+    //------------------------------------------------------------------------
+    case PROT_WAIT_FRAME:
+    {
+      if(false != prot_check_valid_handshake(serial_buffer, msg_vac_handshake_req_0, serial_buffer_level, sizeof(msg_vac_handshake_req_0)))
+      {
+        prot_state = PROT_WAIT_HANDSHAKE_2;
+      }
+
+      serial_buffer_level = 0;
+    }
+    break;
+    //------------------------------------------------------------------------
+    case PROT_WAIT_HANDSHAKE_2:
+    {
+      if(false != prot_check_valid_handshake(serial_buffer, msg_vac_handshake_req_1, serial_buffer_level, sizeof(msg_vac_handshake_req_1)))
+      {
+        prot_state = PROT_TX_HANDSHAKE;
+      }
+
+      serial_buffer_level = 0;
+    }
+    break;
+    //------------------------------------------------------------------------
+    case PROT_TX_HANDSHAKE:
+    {
+      serial_send(msg_bms_handshake_res, sizeof(msg_bms_handshake_res));
+      sw_timer_start(&wait_state_timer);
+      wait_state_timer_value = 5;
+      prot_state             = PROT_WAIT_STATE;
+      prot_state_next        = PROT_MAIN;
+    }
+    break;
+    //------------------------------------------------------------------------
+    case PROT_MAIN:
+    {
+      if(false == sw_timer_is_elapsed(&valid_data_frame_timeout_timer, 200))
+      {
+        if(0 == memcmp(&serial_buffer[0], &msg_vac_data_req[0], (MSG_ROLLING_COUNTER_IDX - 1)))
+        { // check the beginning of 0x21 message, without rolling counter
+          if(0 == memcmp(&serial_buffer[MSG_ROLLING_COUNTER_IDX], &msg_vac_data_req[MSG_ROLLING_COUNTER_IDX], (sizeof(msg_vac_data_req) - MSG_ROLLING_COUNTER_IDX - (CRC_SIZE + 1))))
+          { // check the rest of the data, skipping rolling counter, CRC32 and frame delimiter
+
+          }
+        }
+      }
+      else
+      {
+        // no valid data frame is received, reset state machine
+        prot_state = PROT_WAIT_FRAME;
+      }
+
+    }
+    break;
+    //------------------------------------------------------------------------
+    case PROT_WAIT_STATE:
+    {
+      if(false != sw_timer_is_elapsed(&wait_state_timer, wait_state_timer_value))
+      {
+        prot_state = prot_state_next;
+      }
+    }
+    break;
+    //------------------------------------------------------------------------
+    default: break;
+  }
+
+}
+
+//- **************************************************************************
 //! \brief 
 //- **************************************************************************
+void prot_serial_rx_callback(uint8_t ch)
+{
+  if(serial_buffer_level < sizeof(serial_buffer))
+  {
+    serial_buffer[serial_buffer_level] = ch;
+    serial_buffer_level++;
+  }
+
+  // reset sw timer on every rx
+  if(PROT_WAIT_FRAME == prot_state)
+  {
+    sw_timer_start(&com_timeout_timer);
+  }
+}
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS
@@ -70,7 +205,23 @@ static const uint8_t msg_bms_chal_resp[]   = {0x12, 0x1B, 0x00, 0x5C, 0x01, 0xC0
 //- **************************************************************************
 //! \brief 
 //- **************************************************************************
+static bool prot_check_valid_handshake(uint8_t* frame_ptr, const uint8_t* handshake_ptr, uint8_t frame_size, uint8_t handshake_size)
+{
+  bool res = false;
 
+  if((frame_size > 0) && (false != sw_timer_is_elapsed(&com_timeout_timer, COMM_TIMEOUT)))
+  {
+    if(frame_size == handshake_size)
+    {
+      if(0 == memcmp(frame_ptr, handshake_ptr, frame_size))
+      {
+        res = true;
+      }
+    }
+  }
+
+  return res;
+}
 /*-----------------------------------------------------------------------------
     END OF MODULE
 -----------------------------------------------------------------------------*/

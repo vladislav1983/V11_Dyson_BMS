@@ -32,6 +32,9 @@
 /*-----------------------------------------------------------------------------
   DECLARATION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
+extern void prot_init(void);
+extern void prot_mainloop(void);
+extern void prot_serial_rx_callback(uint8_t ch);
 
 /*-----------------------------------------------------------------------------
   END OF MODULE DEFINITION FOR MULTIPLE INCLUSION
