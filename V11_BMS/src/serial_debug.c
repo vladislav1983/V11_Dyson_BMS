@@ -6,77 +6,153 @@
  *  Licence: GNU GPL v3 or later
  */ 
 
+/*-----------------------------------------------------------------------------
+    INCLUDE FILES
+-----------------------------------------------------------------------------*/
 #include "serial_debug.h"
 #include "sw_timer.h"
-
 #ifdef SERIAL_DEBUG
-struct usart_module debug_usart;
 #include <string.h>
 #endif
 
-char debug_buffer[80];
-char *debug_msg_buffer = debug_buffer;
 
-static inline void pin_set_peripheral_function(uint32_t pinmux) {
-	uint8_t port = (uint8_t)((pinmux >> 16)/32);
-	PORT->Group[port].PINCFG[((pinmux >> 16) - (port*32))].bit.PMUXEN = 1;
-	PORT->Group[port].PMUX[((pinmux >> 16) - (port*32))/2].reg &= ~(0xF << (4 * ((pinmux >>
-	16) & 0x01u)));
-	PORT->Group[port].PMUX[((pinmux >> 16) - (port*32))/2].reg |= (uint8_t)((pinmux &
-	0x0000FFFF) << (4 * ((pinmux >> 16) & 0x01u)));
-}
 
-void serial_debug_init() {
+/*-----------------------------------------------------------------------------
+    DECLARATION OF LOCAL FUNCTIONS
+-----------------------------------------------------------------------------*/
 
+/*-----------------------------------------------------------------------------
+    DECLARATION OF LOCAL MACROS/#DEFINES
+-----------------------------------------------------------------------------*/
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL TYPES
+-----------------------------------------------------------------------------*/
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL VARIABLES
+-----------------------------------------------------------------------------*/
 #ifdef SERIAL_DEBUG
-	//Set up the pinmux settings for SERCOM0
-	pin_set_peripheral_function(PINMUX_PA11C_SERCOM0_PAD3);
-	pin_set_peripheral_function(PINMUX_PA10C_SERCOM0_PAD2);
-		
-	struct usart_config config_usart;
-	usart_get_config_defaults(&config_usart);
-		
-	//Load the necessary settings into the config struct.
-	config_usart.baudrate    = 115200;
-	config_usart.mux_setting =  USART_RX_3_TX_2_XCK_3 ;
-	config_usart.parity = USART_PARITY_NONE;
-	config_usart.pinmux_pad2 = PINMUX_PA10C_SERCOM0_PAD2;
-	config_usart.pinmux_pad3 = PINMUX_PA11C_SERCOM0_PAD3;
-		
-	//Init the UART
-	while (usart_init(&debug_usart,SERCOM0, &config_usart) != STATUS_OK) {
-	}
-	//Enable
-	usart_enable(&debug_usart);
-	
-	//Initial debug blurb
-	serial_debug_send_message("Dyson V11/V15 BMS After market firmware\r\n");
-	//Need to pause 250mS before cell voltages are available from the BQ7693
-	sw_timer_delay_ms(300);
-	serial_debug_send_cell_voltages();
+static struct usart_module debug_usart;
+static char debug_buffer[80];
 #endif
 
+/*-----------------------------------------------------------------------------
+    DEFINITION OF GLOBAL CONSTANTS
+-----------------------------------------------------------------------------*/
+
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF GLOBAL VARIABLES
+-----------------------------------------------------------------------------*/
+#ifdef SERIAL_DEBUG
+char *debug_msg_buffer = debug_buffer;
+#endif
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL CONSTANTS
+-----------------------------------------------------------------------------*/
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
+-----------------------------------------------------------------------------*/
+#ifdef SERIAL_DEBUG
+static void pin_set_peripheral_function(uint32_t pinmux);
+#endif
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF GLOBAL FUNCTIONS
+-----------------------------------------------------------------------------*/
+//- **************************************************************************
+//! \brief 
+//- **************************************************************************
+void serial_debug_init()
+{
+#ifdef SERIAL_DEBUG
+  //Set up the pinmux settings for SERCOM0
+  //pin_set_peripheral_function(PINMUX_PA11C_SERCOM0_PAD3);
+  //pin_set_peripheral_function(PINMUX_PA10C_SERCOM0_PAD2);
+  
+  struct usart_config config_usart;
+  usart_get_config_defaults(&config_usart);
+  
+  //Load the necessary settings into the config struct.
+  config_usart.baudrate    = 115200ul;
+  config_usart.mux_setting = USART_RX_3_TX_2_XCK_3 ;
+  config_usart.parity      = USART_PARITY_NONE;
+  config_usart.pinmux_pad0 = PINMUX_UNUSED;
+  config_usart.pinmux_pad1 = PINMUX_UNUSED;
+  config_usart.pinmux_pad2 = PINMUX_PA10C_SERCOM0_PAD2;
+  config_usart.pinmux_pad3 = PINMUX_PA11C_SERCOM0_PAD3;
+  
+  //Init the UART
+  while (usart_init(&debug_usart,SERCOM0, &config_usart) != STATUS_OK) { }
+  //Enable
+  usart_enable(&debug_usart);
+  
+  //Initial debug blurb
+  serial_debug_send_message("Dyson V11/V15 BMS After market firmware\r\n");
+  //Need to pause at least 250mS before cell voltages are available from the BQ7693
+  sw_timer_delay_ms(250);
+  serial_debug_send_cell_voltages();
+#endif
 }
 
-void serial_debug_send_message(const char *msg) 
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
+void serial_debug_send_message(const char *msg)
 {
 #ifdef SERIAL_DEBUG
   size_t msg_len = strlen(msg);
 
   if(msg_len > 0)
-	{
+  {
     usart_write_buffer_wait(&debug_usart, (const uint8_t*)msg, (uint16_t)msg_len);
   }
 #endif
 }
 
-void serial_debug_send_cell_voltages() {
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
+void serial_debug_send_cell_voltages()
+{
 #ifdef SERIAL_DEBUG
-	uint16_t *cell_voltages = bq7693_get_cell_voltages();
-	serial_debug_send_message("Pack cell voltages:\r\n");
-	for (int i=0; i<7; ++i) {
-		sprintf(debug_msg_buffer, "Cell %d: %d mV\r\n", i, cell_voltages[i]);
-		serial_debug_send_message(debug_msg_buffer);
-	}
+  uint16_t *cell_voltages = bq7693_get_cell_voltages();
+  
+  serial_debug_send_message("Pack cell voltages:\r\n");
+  
+  for (int i=0; i<7; ++i) 
+  {
+    sprintf(debug_msg_buffer, "Cell %d: %d mV\r\n", i, cell_voltages[i]);
+    serial_debug_send_message(debug_msg_buffer);
+  }
 #endif
 }
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL FUNCTIONS
+-----------------------------------------------------------------------------*/
+//- **************************************************************************
+//! \brief 
+//- **************************************************************************
+#ifdef SERIAL_DEBUG
+static void pin_set_peripheral_function(uint32_t pinmux)
+{
+  uint8_t port = (uint8_t)((pinmux >> 16)/32);
+  PORT->Group[port].PINCFG[((pinmux >> 16) - (port*32))].bit.PMUXEN = 1;
+  PORT->Group[port].PMUX[((pinmux >> 16) - (port*32))/2].reg &= ~(0xF << (4 * ((pinmux >> 16) & 0x01u)));
+  PORT->Group[port].PMUX[((pinmux >> 16) - (port*32))/2].reg |= (uint8_t)((pinmux & 0x0000FFFF) << (4 * ((pinmux >> 16) & 0x01u)));
+}
+#endif
+
+/*-----------------------------------------------------------------------------
+    END OF MODULE
+-----------------------------------------------------------------------------*/
+
+
+
+
+
+

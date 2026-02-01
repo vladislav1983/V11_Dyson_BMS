@@ -1,9 +1,9 @@
 /**
  * \file
  *
- * \brief Global interrupt management for SAM D20, SAM3 and SAM4 (NVIC based)
+ * \brief Common Delay Service
  *
- * Copyright (c) 2012-2018 Microchip Technology Inc. and its subsidiaries.
+ * Copyright (c) 2013-2018 Microchip Technology Inc. and its subsidiaries.
  *
  * \asf_license_start
  *
@@ -33,44 +33,59 @@
 /*
  * Support and FAQ: visit <a href="https://www.microchip.com/support/">Microchip Support</a>
  */
+#ifndef DELAY_H_INCLUDED
+#define DELAY_H_INCLUDED
 
-#include "interrupt_sam_nvic.h"
-
-#if !defined(__DOXYGEN__)
-/* Deprecated - global flag to determine the global interrupt state. Required by
- * QTouch library, however new applications should use cpu_irq_is_enabled()
- * which probes the true global interrupt state from the CPU special registers.
- */
-volatile bool g_interrupt_enabled = true;
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-void cpu_irq_enter_critical(void)
-{
-  if (cpu_irq_critical_section_counter == 0) {
-    if (cpu_irq_is_enabled()) {
-      cpu_irq_disable();
-      cpu_irq_prev_interrupt_state = true;
-    } else {
-      /* Make sure the to save the prev state as false */
-      cpu_irq_prev_interrupt_state = false;
-    }
+/**
+ * @defgroup group_common_services_delay Busy-Wait Delay Routines
+ *
+ * This module provides simple loop-based delay routines for those
+ * applications requiring a brief wait during execution. Common for
+ * API ver. 2.
+ *
+ * @{
+ */
 
-  }
+#ifdef SYSTICK_MODE
+#include "sam0/systick_counter.h"
+#endif
+#ifdef CYCLE_MODE
+#include "sam0/cycle_counter.h"
+#endif
 
-  cpu_irq_critical_section_counter++;
+void delay_init(void);
+
+/**
+ * \def delay_s
+ * \brief Delay in at least specified number of seconds.
+ * \param delay Delay in seconds
+ */
+#define delay_s(delay)          ((delay) ? cpu_delay_s(delay) : cpu_delay_us(1))
+
+/**
+ * \def sw_timer_delay_ms
+ * \brief Delay in at least specified number of milliseconds.
+ * \param delay Delay in milliseconds
+ */
+#define delay_ms(delay)         ((delay) ? cpu_delay_ms(delay) : cpu_delay_us(1))
+
+/**
+ * \def delay_us
+ * \brief Delay in at least specified number of microseconds.
+ * \param delay Delay in microseconds
+ */
+#define delay_us(delay)         ((delay) ? cpu_delay_us(delay) : cpu_delay_us(1))
+
+#ifdef __cplusplus
 }
+#endif
 
-void cpu_irq_leave_critical(void)
-{
-  /* Check if the user is trying to leave a critical section when not in a critical section */
-  Assert(cpu_irq_critical_section_counter > 0);
+/**
+ * @}
+ */
 
-  cpu_irq_critical_section_counter--;
-
-  /* Only enable global interrupts when the counter reaches 0 and the state of the global interrupt flag
-     was enabled when entering critical state */
-  if ((cpu_irq_critical_section_counter == 0) && (cpu_irq_prev_interrupt_state)) {
-    cpu_irq_enable();
-  }
-}
-
+#endif /* DELAY_H_INCLUDED */

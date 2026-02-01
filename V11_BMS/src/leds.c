@@ -5,53 +5,140 @@
  *  Contact: davidmpye@gmail.com
  *  Licence: GNU GPL v3 or later
  */ 
+
+/*-----------------------------------------------------------------------------
+    INCLUDE FILES
+-----------------------------------------------------------------------------*/
 #include "leds.h"
 #include "sw_timer.h"
 
+/*-----------------------------------------------------------------------------
+    DEFINITION OF GLOBAL VARIABLES
+-----------------------------------------------------------------------------*/
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF GLOBAL CONSTANTS
+-----------------------------------------------------------------------------*/
+
+/*-----------------------------------------------------------------------------
+    DECLARATION OF LOCAL FUNCTIONS
+-----------------------------------------------------------------------------*/
+
+/*-----------------------------------------------------------------------------
+    DECLARATION OF LOCAL MACROS/#DEFINES
+-----------------------------------------------------------------------------*/
 //speed of LED sequence
-#define LED_SEQ_TIME 50
+#define LED_SEQ_TIME    50
+#define NUM_LEDS        2
 
-#define NUM_LEDS 2
-uint16_t leds[] = { LED_BLOCKED, LED_ERR, };
-	
-void leds_init() 
-{
-	//Set up the LED pins as IO
-	struct port_config led_port_config;
-	port_get_config_defaults(&led_port_config);
-	led_port_config.direction = PORT_PIN_DIR_OUTPUT;
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL TYPES
+-----------------------------------------------------------------------------*/
 
-	for (int i=0; i<NUM_LEDS; ++i) 
-  {
-		port_pin_set_config(leds[i], &led_port_config);
-	}
-}
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL VARIABLES
+-----------------------------------------------------------------------------*/
 
-void leds_off() 
-{
-	for (int i=0; i<NUM_LEDS; ++i) 
-  {
-		port_pin_set_output_level(leds[i], false);
-	}
-}
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL CONSTANTS
+-----------------------------------------------------------------------------*/
+static uint16_t leds[] = { LED_ERR_RIGHT, LED_ERR_LEFT };
 
-void leds_on() 
-{
-	for (int i=0; i<NUM_LEDS; ++i) 
-  {
-		port_pin_set_output_level(leds[i], true);
-	}
-}
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
+-----------------------------------------------------------------------------*/
 
-void leds_blink_error_led(int ms) 
-{
-		port_pin_set_output_level(LED_ERR, true );
-		sw_timer_delay_ms(ms/2);
-		port_pin_set_output_level(LED_ERR, false );
-		sw_timer_delay_ms(ms/2);
-}
+/*-----------------------------------------------------------------------------
+    DEFINITION OF GLOBAL FUNCTIONS
+-----------------------------------------------------------------------------*/
+//- **************************************************************************
+//! \brief 
+//- **************************************************************************
+ void leds_init()
+ {
+   //Set up the LED pins as IO
+   struct port_config led_port_config;
+   port_get_config_defaults(&led_port_config);
+   led_port_config.direction = PORT_PIN_DIR_OUTPUT;
+   for (int i=0; i<NUM_LEDS; ++i)
+   {
+     port_pin_set_config(leds[i], &led_port_config);
+   }
+ }
 
-void leds_show_pack_flat() 
-{
+ //- **************************************************************************
+ //! \brief
+ //- **************************************************************************
+  void leds_sequence(void)
+ {
+   for (int i=0; i<NUM_LEDS; ++i)
+   {
+     port_pin_set_output_level(leds[i], true);
+     sw_timer_delay_ms(LED_SEQ_TIME);
+   }
 
-}
+   for (int i = NUM_LEDS-1; i>=0; --i)
+   {
+     port_pin_set_output_level(leds[i], false);
+     sw_timer_delay_ms(LED_SEQ_TIME);
+   }
+ }
+
+ //- **************************************************************************
+ //! \brief
+ //- **************************************************************************
+ void leds_off()
+ {
+   for (int i=0; i<NUM_LEDS; ++i)
+   {
+     port_pin_set_output_level(leds[i], false);
+   }
+ }
+
+ //- **************************************************************************
+ //! \brief
+ //- **************************************************************************
+ void leds_on()
+ {
+   for (int i=0; i<NUM_LEDS; ++i)
+   {
+     port_pin_set_output_level(leds[i], true);
+   }
+ }
+
+ //- **************************************************************************
+ //! \brief
+ //- **************************************************************************
+ void leds_blink_error_led(int ms)
+ {
+   port_pin_set_output_level(LED_ERR_LEFT, true );
+   port_pin_set_output_level(LED_ERR_RIGHT, true);
+   sw_timer_delay_ms(ms/2);
+   port_pin_set_output_level(LED_ERR_LEFT, false );
+   port_pin_set_output_level(LED_ERR_RIGHT, false);
+   sw_timer_delay_ms(ms/2);
+ }
+
+ //- **************************************************************************
+ //! \brief
+ //- **************************************************************************
+ void leds_show_pack_flat()
+ {
+
+ }
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL FUNCTIONS
+-----------------------------------------------------------------------------*/
+//- **************************************************************************
+//! \brief 
+//- **************************************************************************
+
+/*-----------------------------------------------------------------------------
+    END OF MODULE
+-----------------------------------------------------------------------------*/
+
+
+
+
+ 

@@ -9,7 +9,7 @@
 
 int main(void) 
 {
-	bms_init();
-	bms_mainloop();
-	//never returns.
+  bms_init();
+  bms_mainloop();
+  //never returns.
 }

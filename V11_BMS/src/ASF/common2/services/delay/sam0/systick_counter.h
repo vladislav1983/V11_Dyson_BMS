@@ -1,9 +1,9 @@
 /**
  * \file
  *
- * \brief SAM External Interrupt Driver
+ * \brief ARM functions for busy-wait delay loops
  *
- * Copyright (c) 2012-2018 Microchip Technology Inc. and its subsidiaries.
+ * Copyright (c) 2014-2018 Microchip Technology Inc. and its subsidiaries.
  *
  * \asf_license_start
  *
@@ -33,66 +33,71 @@
 /*
  * Support and FAQ: visit <a href="https://www.microchip.com/support/">Microchip Support</a>
  */
-#ifndef EXTINT_CALLBACK_H_INCLUDED
-#define EXTINT_CALLBACK_H_INCLUDED
+#ifndef CYCLE_COUNTER_H_INCLUDED
+#define CYCLE_COUNTER_H_INCLUDED
 
 #include <compiler.h>
+#include <clock.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * \addtogroup asfdoc_sam0_extint_group
+ * \name Convenience functions for busy-wait delay loops
  *
  * @{
  */
 
-/** \name Callback Configuration and Initialization
- * @{
+/**
+ * \brief Delay loop to delay n number of cycles
+ * Delay program execution for at least the specified number of CPU cycles.
+ *
+ * \param n  Number of cycles to delay
  */
-
-/** Enum for the possible callback types for the EXTINT module. */
-enum extint_callback_type
+static inline void delay_cycles(
+    const uint32_t n)
 {
-  /** Callback type for when an external interrupt detects the configured
-   *  channel criteria (i.e. edge or level detection)
-   */
-  EXTINT_CALLBACK_TYPE_DETECT,
-};
+  if (n > 0) {
+    SysTick->LOAD = n;
+    SysTick->VAL = 0;
 
-enum status_code extint_register_callback(
-  const extint_callback_t callback,
-  const uint8_t channel,
-  const enum extint_callback_type type);
+    while (!(SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk)) {
+    };
+  }
+}
 
-enum status_code extint_unregister_callback(
-  const extint_callback_t callback,
-  const uint8_t channel,
-  const enum extint_callback_type type);
+void delay_cycles_us(uint32_t n);
 
-uint8_t extint_get_current_channel(void);
+void delay_cycles_ms(uint32_t n);
 
-/** @} */
-
-/** \name Callback Enabling and Disabling (Channel)
- * @{
+/**
+ * \brief Delay program execution for at least the specified number of microseconds.
+ *
+ * \param delay  number of microseconds to wait
  */
+#define cpu_delay_us(delay)      delay_cycles_us(delay)
 
-enum status_code extint_chan_enable_callback(
-  const uint8_t channel,
-  const enum extint_callback_type type);
+/**
+ * \brief Delay program execution for at least the specified number of milliseconds.
+ *
+ * \param delay  number of milliseconds to wait
+ */
+#define cpu_delay_ms(delay)      delay_cycles_ms(delay)
 
-enum status_code extint_chan_disable_callback(
-  const uint8_t channel,
-  const enum extint_callback_type type);
+/**
+ * \brief Delay program execution for at least the specified number of seconds.
+ *
+ * \param delay  number of seconds to wait
+ */
+#define cpu_delay_s(delay)       delay_cycles_ms(1000 * delay)
 
-/** @} */
-
-/** @} */
+/**
+ * @}
+ */
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif
+#endif /* CYCLE_COUNTER_H_INCLUDED */

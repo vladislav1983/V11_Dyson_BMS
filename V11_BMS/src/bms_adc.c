@@ -88,7 +88,7 @@ void adc_convert_channels(void)
 
   for(uint16_t i = 0; i < (uint16_t)BMS_ADC_CH_NUM; i++)
   {
-    enum adc_positive_input ch_mux =  adc_ch_map_cfg[i];
+    enum adc_positive_input ch_mux = adc_ch_map_cfg[i];
 
     /* Select ADC channel */
     adc_set_positive_input(&adc_instance, ch_mux);

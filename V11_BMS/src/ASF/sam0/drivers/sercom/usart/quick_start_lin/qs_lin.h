@@ -67,7 +67,7 @@
  * -# Define LIN ID field for header format.
  *    \snippet qs_lin.c lin_id
  *    \note The ID \c LIN_ID_FIELD_VALUE is eight bits as [P1,P0,ID5...ID0], when it's 0x64, the
- * 		data field length is four bytes plus a checksum byte.
+ *     data field length is four bytes plus a checksum byte.
  *
  * -# Define LIN RX/TX buffer.
  *    \snippet qs_lin.c lin_buffer

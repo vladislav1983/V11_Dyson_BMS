@@ -6,22 +6,41 @@
  *  Licence: GNU GPL v3 or later
  */ 
 
-
 #ifndef LEDS_H_
 #define LEDS_H_
-
+/*-----------------------------------------------------------------------------
+  INCLUDE FILES
+---------------------------------------------------------------------------- */
 #include "asf.h"
 #include "config.h"
 
-void leds_init(void);
-void leds_blink_error_led(int);
-void leds_show_pack_flat(void);
+/*-----------------------------------------------------------------------------
+  DEFINITION OF GLOBAL TYPES
+-----------------------------------------------------------------------------*/
 
+/*-----------------------------------------------------------------------------
+  DEFINITION OF GLOBAL MACROS/#DEFINES
+-----------------------------------------------------------------------------*/
 
-void leds_show_filter_err_status(bool);
-void leds_show_blocked_err_status(bool);
+/*-----------------------------------------------------------------------------
+  DECLARATION OF GLOBAL VARIABLES
+-----------------------------------------------------------------------------*/
 
-void leds_off(void);
-void leds_on(void);
+/*-----------------------------------------------------------------------------
+  DECLARATION OF GLOBAL CONSTANTS
+-----------------------------------------------------------------------------*/
 
+/*-----------------------------------------------------------------------------
+  DECLARATION OF GLOBAL FUNCTIONS
+-----------------------------------------------------------------------------*/
+extern void leds_init(void);
+extern void leds_sequence(void) ;
+extern void leds_blink_error_led(int);
+extern void leds_show_pack_flat(void);
+extern void leds_off(void);
+extern void leds_on(void);
+
+/*-----------------------------------------------------------------------------
+  END OF MODULE DEFINITION FOR MULTIPLE INCLUSION
+-----------------------------------------------------------------------------*/
 #endif /* LEDS_H_ */

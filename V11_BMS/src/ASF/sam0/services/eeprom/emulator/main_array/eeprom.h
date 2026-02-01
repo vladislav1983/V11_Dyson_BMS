@@ -354,10 +354,10 @@ extern "C" {
  * Structure containing the memory layout parameters of the EEPROM emulator module.
  */
 struct eeprom_emulator_parameters {
-	/** Number of bytes per emulated EEPROM page. */
-	uint8_t  page_size;
-	/** Number of emulated pages of EEPROM. */
-	uint16_t eeprom_number_of_pages;
+  /** Number of bytes per emulated EEPROM page. */
+  uint8_t  page_size;
+  /** Number of emulated pages of EEPROM. */
+  uint16_t eeprom_number_of_pages;
 };
 
 /** @} */
@@ -371,7 +371,7 @@ enum status_code eeprom_emulator_init(void);
 void eeprom_emulator_erase_memory(void);
 
 enum status_code eeprom_emulator_get_parameters(
-		struct eeprom_emulator_parameters *const parameters);
+    struct eeprom_emulator_parameters *const parameters);
 
 /** @} */
 
@@ -383,12 +383,12 @@ enum status_code eeprom_emulator_get_parameters(
 enum status_code eeprom_emulator_commit_page_buffer(void);
 
 enum status_code eeprom_emulator_write_page(
-		const uint8_t logical_page,
-		const uint8_t *const data);
+    const uint8_t logical_page,
+    const uint8_t *const data);
 
 enum status_code eeprom_emulator_read_page(
-		const uint8_t logical_page,
-		uint8_t *const data);
+    const uint8_t logical_page,
+    uint8_t *const data);
 
 /** @} */
 
@@ -397,14 +397,14 @@ enum status_code eeprom_emulator_read_page(
  */
 
 enum status_code eeprom_emulator_write_buffer(
-		const uint16_t offset,
-		const uint8_t *const data,
-		const uint16_t length);
+    const uint16_t offset,
+    const uint8_t *const data,
+    const uint16_t length);
 
 enum status_code eeprom_emulator_read_buffer(
-		const uint16_t offset,
-		uint8_t *const data,
-		const uint16_t length);
+    const uint16_t offset,
+    uint8_t *const data,
+    const uint16_t length);
 
 /** @} */
 
@@ -422,18 +422,18 @@ enum status_code eeprom_emulator_read_buffer(
  * intended meanings.
  *
  * <table>
- *	<tr>
- *		<th>Acronym</th>
- *		<th>Description</th>
- *	</tr>
- *	<tr>
- *		<td>EEPROM</td>
- *		<td>Electronically Erasable Read-Only Memory</td>
- *	</tr>
- *	<tr>
- *		<td>NVM</td>
- *		<td>Non-Volatile Memory</td>
- *	</tr>
+ *  <tr>
+ *    <th>Acronym</th>
+ *    <th>Description</th>
+ *  </tr>
+ *  <tr>
+ *    <td>EEPROM</td>
+ *    <td>Electronically Erasable Read-Only Memory</td>
+ *  </tr>
+ *  <tr>
+ *    <td>NVM</td>
+ *    <td>Non-Volatile Memory</td>
+ *  </tr>
  * </table>
  *
  *
@@ -454,15 +454,15 @@ enum status_code eeprom_emulator_read_buffer(
  * the table.
  *
  * <table>
- *	<tr>
- *		<th>Changelog</th>
- *	</tr>
- *	<tr>
- *		<td>Fix warnings</td>
- *	</tr>
- *	<tr>
- *		<td>Initial Release</td>
- *	</tr>
+ *  <tr>
+ *    <th>Changelog</th>
+ *  </tr>
+ *  <tr>
+ *    <td>Fix warnings</td>
+ *  </tr>
+ *  <tr>
+ *    <td>Initial Release</td>
+ *  </tr>
  * </table>
  */
 
@@ -480,34 +480,34 @@ enum status_code eeprom_emulator_read_buffer(
  * \page asfdoc_sam0_eeprom_document_revision_history Document Revision History
  *
  * <table>
- *	<tr>
- *		<th>Doc. Rev.</th>
- *		<th>Date</th>
- *		<th>Comments</th>
- *	</tr>
- *	<tr>
- *		<td>42125F</td>
- *		<td>12/2015</td>
- *		<td>Added support for SAM L22, SAM DA1, and SAM C20/C21</td>
- *	</tr>
- *	<tr>
- *		<td>42125E</td>
- *		<td>11/2014</td>
- *		<td>Added support for SAM L21</td>
- *	</tr>
- *	<tr>
- *		<td>42125D</td>
- *		<td>09/2014</td>
- *		<td>Added support for SAM R21, and SAM D10/D11</td>
- *	</tr>
- *	<tr>
- *		<td>42125C</td>
- *		<td>07/2014</td>
- *		<td>Add support for SAM D21</td>
- *	</tr>
  *  <tr>
- *	   <td>42125B</td>
- *	   <td>11/2013</td>
+ *    <th>Doc. Rev.</th>
+ *    <th>Date</th>
+ *    <th>Comments</th>
+ *  </tr>
+ *  <tr>
+ *    <td>42125F</td>
+ *    <td>12/2015</td>
+ *    <td>Added support for SAM L22, SAM DA1, and SAM C20/C21</td>
+ *  </tr>
+ *  <tr>
+ *    <td>42125E</td>
+ *    <td>11/2014</td>
+ *    <td>Added support for SAM L21</td>
+ *  </tr>
+ *  <tr>
+ *    <td>42125D</td>
+ *    <td>09/2014</td>
+ *    <td>Added support for SAM R21, and SAM D10/D11</td>
+ *  </tr>
+ *  <tr>
+ *    <td>42125C</td>
+ *    <td>07/2014</td>
+ *    <td>Add support for SAM D21</td>
+ *  </tr>
+ *  <tr>
+ *     <td>42125B</td>
+ *     <td>11/2013</td>
  *     <td>
  *        - ASF 3.13: Fixed bugs related to eeprom_emulator_write_buffer() and
  *          eeprom_emulator_read_buffer(). The functions now handle offsets that
@@ -517,12 +517,12 @@ enum status_code eeprom_emulator_read_buffer(
  *        - Updated module figures and re-worded the module overview. Corrected
  *          documentation typos
  *     </td>
- *	</tr>
- *	<tr>
- *		<td>42125A</td>
- *		<td>06/2013</td>
- *		<td>Initial release</td>
- *	</tr>
+ *  </tr>
+ *  <tr>
+ *    <td>42125A</td>
+ *    <td>06/2013</td>
+ *    <td>Initial release</td>
+ *  </tr>
  * </table>
  */
 

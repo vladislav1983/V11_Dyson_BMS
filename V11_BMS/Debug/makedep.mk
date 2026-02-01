@@ -4,6 +4,10 @@
 
 src\ASF\sam0\drivers\sercom\sercom_interrupt.c
 
+src\ASF\sam0\drivers\tc\tc.c
+
+src\ASF\sam0\drivers\tc\tc_interrupt.c
+
 src\sw_timer.c
 
 src\ASF\sam0\drivers\sercom\usart\usart_interrupt.c
@@ -31,6 +35,8 @@ src\bms.c
 src\eeprom_handler.c
 
 src\serial.c
+
+src\ASF\common2\services\delay\sam0\systick_counter.c
 
 src\ASF\sam0\drivers\adc\adc_sam_d_r_h\adc.c
 

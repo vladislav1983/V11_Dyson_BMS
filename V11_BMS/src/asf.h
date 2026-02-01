@@ -62,6 +62,9 @@
 // From module: Common build items for user board support templates
 #include <user_board.h>
 
+// From module: Delay routines
+#include <delay.h>
+
 // From module: EEPROM Emulator Service
 #include <eeprom.h>
 
@@ -120,5 +123,9 @@
 
 // From module: SYSTEM - Reset Management for SAM D20/D21/R21/D09/D10/D11/DA/HA
 #include <reset.h>
+
+// From module: TC - Timer Counter (Polled APIs)
+#include <tc.h>
+#include <tc_interrupt.h>
 
 #endif // ASF_H

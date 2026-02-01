@@ -21,8 +21,8 @@ void board_init(void);
 
 void system_board_init(void)
 {
-	/* This function is meant to contain board-specific initialization code
-	 * for, e.g., the I/O pins. The initialization can rely on application-
-	 * specific board configuration, found in conf_board.h.
-	 */
+  /* This function is meant to contain board-specific initialization code
+   * for, e.g., the I/O pins. The initialization can rely on application-
+   * specific board configuration, found in conf_board.h.
+   */
 }
