@@ -32,11 +32,11 @@
     DECLARATION OF LOCAL MACROS/#DEFINES
 -----------------------------------------------------------------------------*/
 
-#define MSG_DELIM_IDX                       1
-#define MSG_ID_IDX                          2
+#define MSG_DELIM_IDX                       0
+#define MSG_ID_IDX                          1
 // message 0x12 0x38 .. indexes
 #define BMS_MSG_ROLLING_COUNTER_IDX         8
-#define BMS_MSG_RUNNING_IDX                 15
+#define BMS_MSG_TRIGGER_IDX                 15
 #define BMS_MSG_CHARGER_CONNECTED_IDX       22
 #define BMS_MSG_SOC_LO_IDX                  29
 #define BMS_MSG_SOC_HI_IDX                  30
@@ -48,7 +48,7 @@
 #define MSG_DELIM_CHAR                      0x12
 #define MSG_DELIM_SIZE                      1
 #define CRC_SIZE                            4
-#define COMM_TIMEOUT                        (2 / SW_TIMER_TICK_MS)
+#define TX_WAIT_TIME                        (2 / SW_TIMER_TICK_MS)
 
 #ifdef SERIAL_DEBUG
   #define PROT_PRINT(...) \
@@ -91,15 +91,17 @@ typedef struct
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL VARIABLES
 -----------------------------------------------------------------------------*/
-static sw_timer com_timeout_timer = 0;
+static sw_timer wait_timer = 0;
 static bool     prot_trigger_state = false;
 static bool     prot_vacuum_connected = false;
 
-uint8_t serial_buffer_rx[64]       = {0};
-uint8_t serial_buffer_tx[64]       = {0};
+uint8_t serial_buffer_rx[80]       = {0};
+uint8_t serial_buffer_tx[80]       = {0};
 static uint8_t serial_buffer_level = 0;
 static prot_states prot_state      = PROT_INIT;
-static uint8_t tx_msg_idx = 0;
+static prot_states prot_state_next = PROT_INIT;
+static uint8_t tx_msg_idx          = 0;
+static bool    frame_flag          = false;
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
@@ -114,10 +116,10 @@ static const uint8_t msg_vac_data_req[]    = {0x12, 0x21, 0x00, 0x53, 0x01, 0xC0
 static const uint8_t msg_bms_data_res[]   = {0x12, 0x38, 0x00, 0xC1, 0x01, 0xC0, 0x02, 0x01, 0x04, 0x01, 0x10, 0x00, 0x81, 0x01, 0x00, 0x01, 0x01, 0x10, 0x01, 0x21, 0x01, 0x00, 0x00, 0x01, 0x10, 0x0D, 0x25, 0x02, 0x00, 0xFA, 0x25, 0x01, 0x10, 0x02, 0x22, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x10, 0x05, 0x81, 0x02, 0x00, 0x67, 0x11, 0x01, 0x10, 0x06, 0x81, 0x01, 0x00, 0x01, 0x7F, 0x52, 0x4C, 0xE7, 0x12};
 
 // challenge/response message between vacuum and bms - data is not changed
-static const uint8_t msg_vac_trig_req[]       = {0x12, 0x16, 0x00, 0xAE, 0x00, 0xC0, 0x01, 0x03, 0x01, 0x07, 0x10, 0x11, 0x00, 0x82, 0x40, 0x42, 0x0F, 0x00, 0x02, 0x10, 0x00, 0x81, 0xC5, 0x6A, 0xE2, 0x0B, 0x12};
-//static const uint8_t msg_vac_trigger_req_2[]     = {0x12, 0x16, 0x00, 0xAE, 0x00, 0xC0, 0x01, 0x03, 0x01, 0x07, 0x10, 0xDB, 0xDE, 0x00, 0x82, 0x98, 0x3A, 0x00, 0x00, 0x02, 0x10, 0x00, 0x81, 0xD7, 0xBA, 0xB5, 0x68, 0x12};
-//static const uint8_t msg_vac_trigger_req_3[]     = {0x12, 0x16, 0x00, 0xAE, 0x00, 0xC0, 0x01, 0x03, 0x01, 0x07, 0x10, 0xDB, 0xDE, 0x00, 0x82, 0x00, 0x00, 0x00, 0x00, 0x02, 0x10, 0x00, 0x81, 0x86, 0x38, 0xD6, 0x01, 0x12};
-static const uint8_t msg_vac_trig_charging_req[]  = {0x12, 0x16, 0x00, 0xAE, 0x00, 0xC0, 0x01, 0x03, 0x01, 0x07, 0x10, 0x11, 0x00, 0x82, 0x00, 0x00, 0x00, 0x00, 0x02, 0x10, 0x00, 0x81, 0x48, 0x54, 0x1C, 0xBC, 0x12};
+static const uint8_t msg_vac_trig_req[]           = {0x12, 0x16, 0x00, 0xAE, 0x00, 0xC0, 0x01, 0x03, 0x01, 0x07, 0x10, 0x11, 0x00, 0x82, 0x40, 0x42, 0x0F, 0x00, 0x02, 0x10, 0x00, 0x81, 0xC5, 0x6A, 0xE2, 0x0B, 0x12};
+//static const uint8_t msg_vac_trigger_req_2[]    = {0x12, 0x16, 0x00, 0xAE, 0x00, 0xC0, 0x01, 0x03, 0x01, 0x07, 0x10, 0xDB, 0xDE, 0x00, 0x82, 0x98, 0x3A, 0x00, 0x00, 0x02, 0x10, 0x00, 0x81, 0xD7, 0xBA, 0xB5, 0x68, 0x12};
+//static const uint8_t msg_vac_trigger_req_3[]    = {0x12, 0x16, 0x00, 0xAE, 0x00, 0xC0, 0x01, 0x03, 0x01, 0x07, 0x10, 0xDB, 0xDE, 0x00, 0x82, 0x00, 0x00, 0x00, 0x00, 0x02, 0x10, 0x00, 0x81, 0x86, 0x38, 0xD6, 0x01, 0x12};
+//static const uint8_t msg_vac_trig_charging_req[]  = {0x12, 0x16, 0x00, 0xAE, 0x00, 0xC0, 0x01, 0x03, 0x01, 0x07, 0x10, 0x11, 0x00, 0x82, 0x00, 0x00, 0x00, 0x00, 0x02, 0x10, 0x00, 0x81, 0x48, 0x54, 0x1C, 0xBC, 0x12};
 // bms response of msg 0x16 is 0x1B
 // vac running
 static const uint8_t msg_bms_trig_on_res[]   = {0x12, 0x1B, 0x00, 0x5C, 0x01, 0xC0, 0x03, 0x01, 0x01, 0x08, 0x10, 0x11, 0x01, 0x82, 0x20, 0xDB, 0xDE, 0x0A, 0x00, 0x00, 0x00, 0x01, 0x10, 0x00, 0x81, 0x01, 0x00, 0x01, 0xA9, 0x82, 0xBE, 0x65, 0x12};
@@ -144,30 +146,30 @@ static const prot_cfg_t prot_cfg[] =
     .debug_str        = NULL,
 #endif
   },
-  {
-    .msg_req_ptr      = msg_vac_trig_req,
-    .msg_res_ptr      = NULL,
-    .msg_req_cmp_size = sizeof(msg_vac_trig_req),
-    .msg_req_size     = sizeof(msg_vac_trig_req),
-    .msg_res_size     = 0,
-    .dest_state       = PROT_TX_TRIGGER_RESP,
-    #ifdef SERIAL_DEBUG
-    .dump_bytes       = false,
-    .debug_str        = NULL,
-    #endif
-  },
-  {
-    .msg_req_ptr      = msg_vac_trig_charging_req,
-    .msg_res_ptr      = NULL,
-    .msg_req_cmp_size = sizeof(msg_vac_trig_charging_req),
-    .msg_req_size     = sizeof(msg_vac_trig_charging_req),
-    .msg_res_size     = 0,
-    .dest_state       = PROT_TX_TRIGGER_RESP,
-    #ifdef SERIAL_DEBUG
-    .dump_bytes       = false,
-    .debug_str        = "PROT:TRIG_CHARGING\r\n",
-    #endif
-  },
+//  {
+//    .msg_req_ptr      = msg_vac_trig_req,
+//    .msg_res_ptr      = NULL,
+//    .msg_req_cmp_size = sizeof(msg_vac_trig_req),
+//    .msg_req_size     = sizeof(msg_vac_trig_req),
+//    .msg_res_size     = 0,
+//    .dest_state       = PROT_TX_TRIGGER_RESP,
+//    #ifdef SERIAL_DEBUG
+//    .dump_bytes       = false,
+//    .debug_str        = NULL,
+//    #endif
+//  },
+//  {
+//    .msg_req_ptr      = msg_vac_trig_charging_req,
+//    .msg_res_ptr      = NULL,
+//    .msg_req_cmp_size = sizeof(msg_vac_trig_charging_req),
+//    .msg_req_size     = sizeof(msg_vac_trig_charging_req),
+//    .msg_res_size     = 0,
+//    .dest_state       = PROT_TX_TRIGGER_RESP,
+//    #ifdef SERIAL_DEBUG
+//    .dump_bytes       = false,
+//    .debug_str        = "PROT:TRIG_CHARGING\r\n",
+//    #endif
+//  },
   {
     .msg_req_ptr      = msg_vac_trig_req,
     .msg_res_ptr      = NULL,
@@ -176,8 +178,8 @@ static const prot_cfg_t prot_cfg[] =
     .msg_res_size     = 0,
     .dest_state       = PROT_TX_TRIGGER_RESP,
 #ifdef SERIAL_DEBUG
-    .dump_bytes       = true,
-    .debug_str        = "PROT:UNKNOWN_TRIG:",
+    .dump_bytes       = false,
+    .debug_str        = NULL,
 #endif
   },
   {
@@ -209,11 +211,9 @@ static void prot_assemble_data_frame(void);
 void prot_init(void)
 {
   prot_state = PROT_INIT;
-  com_timeout_timer = 0;
   serial_buffer_level = 0;
   prot_trigger_state = false;
   prot_vacuum_connected = false;
-  sw_timer_start(&com_timeout_timer);
 
   if(sizeof(msg_bms_data_res) > sizeof(serial_buffer_rx) )
   {
@@ -227,18 +227,6 @@ void prot_init(void)
 //- **************************************************************************
 void prot_set_enable(bool enable)
 {
-  if(enable != false)
-  {
-    if(prot_state == PROT_DISABLED)
-      prot_state = PROT_INIT;
-  }
-  else
-  {
-    // disable discharging and precharge
-    port_pin_set_output_level(PRECHARGE_PIN, false);
-    bq7693_disable_discharge();
-    prot_state = PROT_DISABLED;
-  }
 }
 
 //- **************************************************************************
@@ -279,7 +267,6 @@ void prot_mainloop(void)
     {
       PROT_PRINT("PROT_INIT\r\n");
       serial_buffer_level = 0;
-      sw_timer_start(&com_timeout_timer);
       prot_state = PROT_WAIT_FRAME;
     }
     break;
@@ -287,7 +274,13 @@ void prot_mainloop(void)
     case PROT_WAIT_FRAME:
     {
       prot_states prot_state_req = prot_analyze_data_frame(prot_state);
-      prot_state = prot_state_req;
+
+      if(prot_state != prot_state_req)
+      {
+        sw_timer_start(&wait_timer);
+        prot_state_next = prot_state_req;
+        prot_state      = PROT_WAIT_STATE;
+      }
     }
     break;
     //------------------------------------------------------------------------
@@ -326,6 +319,15 @@ void prot_mainloop(void)
     }
     break;
     //------------------------------------------------------------------------
+    case PROT_WAIT_STATE:
+    {
+      if(sw_timer_is_elapsed(&wait_timer, TX_WAIT_TIME))
+      {
+        prot_state = prot_state_next;
+      }
+    }
+    break;
+    //------------------------------------------------------------------------
     case PROT_DISABLED:
     {
       // do nothing here, communication is disabled 
@@ -340,17 +342,29 @@ void prot_mainloop(void)
 //- **************************************************************************
 void prot_serial_rx_callback(uint8_t ch)
 {
-  //if(prot_state == PROT_WAIT_FRAME)
-  {
-    if(serial_buffer_level < sizeof(serial_buffer_rx))
-    {
-      serial_buffer_rx[serial_buffer_level] = ch;
-      serial_buffer_level++;
+  static uint8_t ch_prev = 0;
 
-      // reset sw timer on every rx
-      sw_timer_start(&com_timeout_timer);
-    }
+  if(ch == MSG_DELIM_CHAR && ch_prev != MSG_DELIM_CHAR)
+  { // end of frame detected, to be processed ...
+    frame_flag = true;
   }
+  else if(ch == MSG_DELIM_CHAR && ch_prev == MSG_DELIM_CHAR)
+  { // new frame detected, reset buffer level
+    serial_buffer_level = 0;
+  }
+
+  if(serial_buffer_level < sizeof(serial_buffer_rx))
+  {
+    serial_buffer_rx[serial_buffer_level] = ch;
+    serial_buffer_level++;
+  }
+  else
+  {
+    frame_flag = false;
+  }
+
+  // store current byte
+  ch_prev = ch;
 }
 
 /*-----------------------------------------------------------------------------
@@ -363,21 +377,21 @@ static prot_states prot_analyze_data_frame(prot_states current_state)
 {
   prot_states res = current_state;
 
-  if(sw_timer_is_elapsed(&com_timeout_timer, COMM_TIMEOUT))
+  if(frame_flag != false)
   {
     for(uint8_t cfg_idx = 0; cfg_idx < (sizeof(prot_cfg) / sizeof(prot_cfg[0])); cfg_idx++)
     {
-      if(prot_cfg[cfg_idx].msg_req_cmp_size == serial_buffer_level)
+      switch (serial_buffer_rx[MSG_ID_IDX])
       {
-        switch (serial_buffer_rx[1])
-        {
-          //-----------------------------------------------------
-          case 0x21: // BMS data frame request from vacuum
-          { 
+        //-----------------------------------------------------
+        case 0x21: // BMS data frame request from vacuum
+        { 
+          if(prot_cfg[cfg_idx].msg_req_cmp_size == serial_buffer_level)
+          {
             // check the beginning of 0x21 message, without rolling counter
             if(0 == memcmp(&serial_buffer_rx[0], &prot_cfg[cfg_idx].msg_req_ptr[0], BMS_MSG_ROLLING_COUNTER_IDX))
             {// check the rest of the data, skipping rolling counter, CRC32 and frame delimiter
-              if(0 == memcmp(&serial_buffer_rx[BMS_MSG_ROLLING_COUNTER_IDX + 1], &prot_cfg[cfg_idx].msg_req_ptr[BMS_MSG_ROLLING_COUNTER_IDX + 1], (prot_cfg[cfg_idx].msg_req_size - (BMS_MSG_ROLLING_COUNTER_IDX + 1) - (CRC_SIZE + MSG_DELIM_SIZE))))
+              //if(0 == memcmp(&serial_buffer_rx[BMS_MSG_ROLLING_COUNTER_IDX + 1], &prot_cfg[cfg_idx].msg_req_ptr[BMS_MSG_ROLLING_COUNTER_IDX + 1], (prot_cfg[cfg_idx].msg_req_size - (BMS_MSG_ROLLING_COUNTER_IDX + 1) - (CRC_SIZE + MSG_DELIM_SIZE))))
               {
                 prot_assemble_data_frame();
                 res = prot_cfg[cfg_idx].dest_state;
@@ -385,39 +399,39 @@ static prot_states prot_analyze_data_frame(prot_states current_state)
               }
             }
           }
-          break;
-          //-----------------------------------------------------
-          case 0x22: // handshake
-          case 0x16: // trigger request
-          {
-            bool check_msg = true;
-            
-            // check frame delimiter if we are not checking whole message
-            if(prot_cfg[cfg_idx].msg_req_cmp_size < prot_cfg[cfg_idx].msg_req_size)
-            {
-              if(serial_buffer_rx[serial_buffer_level - 1] != MSG_DELIM_CHAR)
-              {
-                // last byte is not delimiter
-                check_msg = false;
-              }
-            }
-            
-            if(check_msg == true)
-            {
-              if(0 == memcmp(serial_buffer_rx, prot_cfg[cfg_idx].msg_req_ptr, prot_cfg[cfg_idx].msg_req_cmp_size))
-              {
-                res = prot_cfg[cfg_idx].dest_state;
-                tx_msg_idx = cfg_idx;
-              }
-            }
-          }
-          break;
-          //-----------------------------------------------------
-          default:
-          {
-          }
-          break;
         }
+        break;
+        //-----------------------------------------------------
+        case 0x22: // handshake
+        case 0x16: // trigger request
+        {
+          bool check_msg = true;
+            
+          // check frame delimiter if we are not checking whole message
+          if(prot_cfg[cfg_idx].msg_req_cmp_size < prot_cfg[cfg_idx].msg_req_size)
+          {
+            if(serial_buffer_rx[serial_buffer_level - 1] != MSG_DELIM_CHAR)
+            {
+              // last byte is not delimiter
+              check_msg = false;
+            }
+          }
+            
+          if(check_msg == true)
+          {
+            if(0 == memcmp(serial_buffer_rx, prot_cfg[cfg_idx].msg_req_ptr, prot_cfg[cfg_idx].msg_req_cmp_size))
+            {
+              res = prot_cfg[cfg_idx].dest_state;
+              tx_msg_idx = cfg_idx;
+            }
+          }
+        }
+        break;
+        //-----------------------------------------------------
+        default:
+        {
+        }
+        break;
       }
 
       if(res != current_state)
@@ -433,7 +447,7 @@ static prot_states prot_analyze_data_frame(prot_states current_state)
           PROT_PRINT("PROT:RX:");
           for(uint8_t i = 0; i < serial_buffer_level; i++)
           {
-            PROT_PRINT("%X ", serial_buffer_rx[i]);
+            PROT_PRINT("%02X ", serial_buffer_rx[i]);
           }
           PROT_PRINT("\r\n");
         }
@@ -442,7 +456,7 @@ static prot_states prot_analyze_data_frame(prot_states current_state)
       }
     }
 
-    serial_buffer_level = 0;
+    frame_flag = false;
   }
 
   return res;
@@ -468,7 +482,7 @@ static void prot_assemble_data_frame(void)
   // fill charger connected state
   serial_buffer_tx[BMS_MSG_CHARGER_CONNECTED_IDX] = charger_connected;
   // fill trigger state
-  serial_buffer_tx[15] = prot_trigger_state;
+  serial_buffer_tx[BMS_MSG_TRIGGER_IDX] = prot_trigger_state;
   // fill estimated runtime in seconds
   serial_buffer_tx[BMS_MSG_BAT_RUNTIME_LO_IDX] = (uint8_t)((runtime_sec >> 0) & 0x00FF); // lsb first
   serial_buffer_tx[BMS_MSG_BAT_RUNTIME_HI_IDX] = (uint8_t)((runtime_sec >> 8) & 0x00FF);
