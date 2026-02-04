@@ -486,36 +486,30 @@ static void prot_assemble_data_frame(void)
 //- **************************************************************************
 static uint8_t prot_scramble_frame(uint8_t * dest, const uint8_t * src, size_t dest_len, size_t src_len)
 {
-  uint8_t length = 0;
+  size_t length = 0;
   
   if(src_len > (MSG_DELIM_SIZE + 1) && dest_len >= src_len)
   {
-    // copy delimiter - start of frame
-    dest[length++] = src[0];
-    // next 5 bytes are fixed also
-    dest[length++] = src[1];
-    dest[length++] = src[2];
-    dest[length++] = src[3];
-    dest[length++] = src[4];
-    dest[length++] = src[5];
+    // copy first 6 bytes including frame delimiter, which are fixed
+    memcpy(dest, src, 6);
 
-    for (size_t i = 6; i < (src_len - 1); i++)
+    for (size_t i = length = 6; i < (src_len - 1); i++, length++)
     {
       if((length + 2) < (uint8_t)dest_len)
       {
         if(src[i] == 0x12)
         {
-          dest[length++] = (uint8_t)((BYTE_0x12_REPLACEMENT >> 0) & 0xFF);
+          dest[length]   = (uint8_t)((BYTE_0x12_REPLACEMENT >> 0) & 0xFF);
           dest[length++] = (uint8_t)((BYTE_0x12_REPLACEMENT >> 8) & 0xFF);
         }
         else if(src[i] == 0xDB)
         {
-          dest[length++] = (uint8_t)((BYTE_0xDB_REPLACEMENT >> 0) & 0xFF);
+          dest[length]   = (uint8_t)((BYTE_0xDB_REPLACEMENT >> 0) & 0xFF);
           dest[length++] = (uint8_t)((BYTE_0xDB_REPLACEMENT >> 8) & 0xFF);
         }
         else
         {
-          dest[length++] = src[i];
+          dest[length] = src[i];
         }
       }
     }
@@ -531,20 +525,14 @@ static uint8_t prot_scramble_frame(uint8_t * dest, const uint8_t * src, size_t d
 //- **************************************************************************
 static uint8_t prot_unscramble_frame(uint8_t * dest, const uint8_t * src, size_t dest_len, size_t src_len)
 {
-  uint8_t length = 0;
+  size_t length = 0;
 
   if(src_len > (MSG_DELIM_SIZE + 1) && dest_len >= (src_len - 1))
   {
-  // copy delimiter - start of frame
-    dest[length++] = src[0];
-    // next 5 bytes are fixed also
-    dest[length++] = src[1];
-    dest[length++] = src[2];
-    dest[length++] = src[3];
-    dest[length++] = src[4];
-    dest[length++] = src[5];
+    // copy first 6 bytes including frame delimiter, which are fixed
+    memcpy(dest, src, 6);
 
-    for (size_t i = 6; i < (src_len - 1); i++, length++)
+    for (size_t i = length = 6; i < (src_len - 1); i++, length++)
     {
       if((i + 1) < (src_len - 1))
       {
