@@ -19,6 +19,7 @@
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL VARIABLES
 -----------------------------------------------------------------------------*/
+volatile bool     force_sleep = false;
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL CONSTANTS
@@ -61,7 +62,7 @@ static uint16_t charge_pause_counter = 0;
 static uint8_t  charging_leds_duty = 0;
 static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
-static bool     force_sleep = false;
+
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
@@ -165,7 +166,7 @@ void bms_interrupt_callback(void)
     //Ignore tiny values.
     if ( (ccVal > 0 && ccVal > 2)  || (ccVal < 0 && ccVal < -2) )
     {
-      int32_t cc_mah;
+      int32_t cc_uah;
       //i = V/R
       //sense resistor = 1mOhm
       //microV / milliOhms gives current in mA.
@@ -173,18 +174,14 @@ void bms_interrupt_callback(void)
       //Dividing by 14400 would give mAH. (number of 250mS periods in 1 hr.
       //Dividing by 14.4 will give microAH (what we want)
       // 14.4 = ((3600 * 1000) / 250ms) / 1000mAh
-      cc_mah = ccVal * (int16_t)(((8.44f * 250.0f * 32768.0f) / (3600.0f)));
-      eeprom_data.current_charge_level += (cc_mah /32768);
+      cc_uah = ccVal * (int16_t)(((8.44f * 250.0f * 32768.0f) / (3600.0f)));
+      cc_uah /= 32768;
+      eeprom_data.current_charge_level += cc_uah;
       
       //We thought the pack was full, but it's still charging, so we need to update its' size.
       if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
       {
         eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
-
-        if(eeprom_data.total_pack_capacity > (PACK_CAPACITY_MAH * 1000ul))
-        {
-          eeprom_data.total_pack_capacity = (PACK_CAPACITY_MAH * 1000ul);
-        }
       }
       
       //We thought the pack was empty, but it isn't, so again, we need to update our estimate of what it can hold!
@@ -193,11 +190,6 @@ void bms_interrupt_callback(void)
         //subtracting negative numbers will increment the pack capacity.
         eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
         eeprom_data.current_charge_level = 0;
-
-        if(eeprom_data.total_pack_capacity > (PACK_CAPACITY_MAH * 1000ul))
-        {
-          eeprom_data.total_pack_capacity = (PACK_CAPACITY_MAH * 1000ul);
-        }
       }
     }
     //Update the CC bit so it'll refire in another 250mS as per datasheet.
@@ -213,30 +205,44 @@ uint16_t bms_get_soc_x100(void)
 {
   uint16_t soc = 100;
 
-  if(eeprom_data.total_pack_capacity > 0)
+  if(eeprom_data.total_pack_capacity > 0 && eeprom_data.current_charge_level > 0)
   {
-    int16_t current_charge_level = eeprom_data.current_charge_level / 8192;
-    int16_t total_pack_capacity  = eeprom_data.total_pack_capacity  / 8192;
+    uint32_t current_charge_level = eeprom_data.current_charge_level >> 13;
+    uint16_t total_pack_capacity  = eeprom_data.total_pack_capacity  >> 13;
     
-    soc = (current_charge_level * 100) / total_pack_capacity;
-    soc *= 100;
-
-    if(soc > 10000) 
-      soc = 10000;
-    else if(soc == 0)
-      soc = 100;
+    soc = (current_charge_level * (100 * 100)) / total_pack_capacity;
+    soc = (soc > 10000) ? 10000 : ((soc == 0) ? 100 : soc);
   }
 
   return soc;
 }
 
 //- **************************************************************************
-//! \brief
+//! \brief get runtime in seconds, required by vacuum
+//         Prevent excessively large runtime display during pack capacity learning
+//         Always limit to the maximum pack capacity
+//         Do not display less than minute to avoid annoying vacuum messages 
 //- **************************************************************************
 uint32_t bms_get_runtime_seconds(void)
 {
-  uint32_t res = ((eeprom_data.current_charge_level / 1000) * 3600) / abs(current_filt_mA);
-  return res;
+  uint32_t current_filt_mA_abs = abs(current_filt_mA);
+  int32_t  current_charge_level;
+  int32_t  runtime = 0;
+  uint16_t current;
+
+  if(    bms_state == BMS_DISCHARGING // fill the runtime only when vacuum is working
+      && current_filt_mA_abs > 1000)  // and current is > 1A, to prevent too big numbers
+  {
+    current_charge_level = eeprom_data.current_charge_level > (PACK_MAX_CAPACITY_MAH * 1000) ? (PACK_MAX_CAPACITY_MAH * 1000) : eeprom_data.current_charge_level; // limit pack capacity
+    current              = (current_filt_mA == 0) ? 1 : abs(current_filt_mA);  // check current is not zero
+
+    runtime = ((current_charge_level / current) * (uint16_t)((3600.0f / 1000.0f) * 1024.0f)) >> 10;  // compute and scale down
+   
+    // always limit runtime to 1 minute 
+    runtime = runtime < 60 ? 60 : runtime;
+  }
+
+  return (uint32_t)runtime;
 }
 
 //- **************************************************************************
@@ -403,10 +409,10 @@ static int16_t bms_read_temperature(void)
 
   // get tc1
   adc_value = adc_convert_channel(BMS_ADC_CH_TC1);
-  tc1_temp = NTC_ADC2Temperature(adc_value);
+  tc1_temp  = NTC_ADC2Temperature(adc_value);
   // get tc2
   adc_value = adc_convert_channel(BMS_ADC_CH_TC2);
-  tc2_temp = NTC_ADC2Temperature(adc_value);
+  tc2_temp  = NTC_ADC2Temperature(adc_value);
 
   // return temperature point between two thermistors if they have plausible values - no more than 5 degree difference
   temp_diff = tc1_temp - tc2_temp;
@@ -591,8 +597,13 @@ static void bms_handle_idle(void)
     }
     else if (port_pin_get_input_level(TRIGGER_PRESSED_PIN) == true)
     {
-      bms_state = BMS_TRIGGER_PULLED;
-      return;
+      leds_blink_leds(10);
+
+      if (port_pin_get_input_level(TRIGGER_PRESSED_PIN) == true)
+      {
+        bms_state = BMS_TRIGGER_PULLED;
+        return;
+      }
     }
     else if(force_sleep == true)
     {
@@ -803,16 +814,19 @@ static void bms_handle_charging(void)
   
   while (1) 
   {
-    uint8_t duty_loc = charging_leds_duty;
+     #define DUTY_MAX    100
+     uint8_t duty_loc = charging_leds_duty;
 
-    if(charging_leds_duty > 60)
-    {
-      duty_loc = (120 - charging_leds_duty);
-    }
+     if(charging_leds_duty > DUTY_MAX)
+     {
+       duty_loc = ((DUTY_MAX * 2) - charging_leds_duty);
+     }
 
-    leds_set_led_duty(LEDS_LED_ERR_RIGHT, duty_loc);
-    leds_set_led_duty(LEDS_LED_ERR_LEFT,  duty_loc);
-    charging_leds_duty = (charging_leds_duty + 2) % 120;
+     (duty_loc < 10) ? duty_loc = 0 : (duty_loc);
+
+     leds_set_led_duty(LEDS_LED_ERR_RIGHT, duty_loc);
+     leds_set_led_duty(LEDS_LED_ERR_LEFT,  duty_loc);
+     charging_leds_duty = (charging_leds_duty + ((charging_leds_duty > 20) ? 10 : 1)) % ((DUTY_MAX * 2) + 1);
 
     if (!bms_is_safe_to_charge()) 
     {
