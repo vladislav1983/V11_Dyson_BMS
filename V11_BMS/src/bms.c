@@ -180,6 +180,11 @@ void bms_interrupt_callback(void)
       if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
       {
         eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
+
+        if(eeprom_data.total_pack_capacity > (PACK_CAPACITY_MAH * 1000ul))
+        {
+          eeprom_data.total_pack_capacity = (PACK_CAPACITY_MAH * 1000ul);
+        }
       }
       
       //We thought the pack was empty, but it isn't, so again, we need to update our estimate of what it can hold!
@@ -188,6 +193,11 @@ void bms_interrupt_callback(void)
         //subtracting negative numbers will increment the pack capacity.
         eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
         eeprom_data.current_charge_level = 0;
+
+        if(eeprom_data.total_pack_capacity > (PACK_CAPACITY_MAH * 1000ul))
+        {
+          eeprom_data.total_pack_capacity = (PACK_CAPACITY_MAH * 1000ul);
+        }
       }
     }
     //Update the CC bit so it'll refire in another 250mS as per datasheet.
@@ -196,19 +206,28 @@ void bms_interrupt_callback(void)
 }
 
 //- **************************************************************************
-//! \brief
+//! \brief return state of charge to vacuum in % * 100, required by protocol
+//         do not return 0, to prevent vacuum critical battery level screen
 //- **************************************************************************
-int32_t bms_get_soc_x100(void)
+uint16_t bms_get_soc_x100(void)
 {
-  int32_t res = 0;
+  uint16_t soc = 100;
 
   if(eeprom_data.total_pack_capacity > 0)
   {
-    res = eeprom_data.current_charge_level / (eeprom_data.total_pack_capacity / 10000);
-    if(res > 10000) res = 10000;
+    int16_t current_charge_level = eeprom_data.current_charge_level / 8192;
+    int16_t total_pack_capacity  = eeprom_data.total_pack_capacity  / 8192;
+    
+    soc = (current_charge_level * 100) / total_pack_capacity;
+    soc *= 100;
+
+    if(soc > 10000) 
+      soc = 10000;
+    else if(soc == 0)
+      soc = 100;
   }
 
-  return abs(res);
+  return soc;
 }
 
 //- **************************************************************************

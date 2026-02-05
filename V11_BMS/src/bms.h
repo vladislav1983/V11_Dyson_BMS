@@ -70,7 +70,7 @@ enum BMS_ERROR_CODE
 -----------------------------------------------------------------------------*/
  extern void bms_init(void);
  extern void bms_mainloop(void);
- extern int32_t bms_get_soc_x100(void);
+ extern uint16_t bms_get_soc_x100(void);
  extern uint32_t bms_get_runtime_seconds(void);
  extern void bms_interrupt_callback(void) ;
 
