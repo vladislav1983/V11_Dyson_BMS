@@ -31,6 +31,15 @@
 /*-----------------------------------------------------------------------------
     DECLARATION OF LOCAL MACROS/#DEFINES
 -----------------------------------------------------------------------------*/
+#ifdef SERIAL_DEBUG
+#define BMS_PRINT(...) \
+{ \
+  sprintf(debug_msg_buffer, __VA_ARGS__); \
+  serial_debug_send_message(debug_msg_buffer);  \
+}
+#else
+#define BMS_PRINT(...)
+#endif
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
@@ -51,6 +60,8 @@ static int32_t current_filt_mA = 0;
 static uint16_t charge_pause_counter = 0;
 static uint8_t  charging_leds_duty = 0;
 static sw_timer bms_timer = 0;
+static int16_t  pack_temperature = 0;
+static bool     force_sleep = false;
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
@@ -62,7 +73,6 @@ const char *bms_state_names[] =
   "IDLE",
   "CHARGER_CONNECTED",
   "CHARGING",
-  "CHARGING_PAUSED",
   "CHARGER_CONNECTED_NOT_CHARGING",
   "CHARGER_UNPLUGGED",
   "TRIGGER_PULLED",
@@ -190,8 +200,15 @@ void bms_interrupt_callback(void)
 //- **************************************************************************
 int32_t bms_get_soc_x100(void)
 {
-  int32_t res = eeprom_data.current_charge_level / (eeprom_data.total_pack_capacity / 10000);
-  return res;
+  int32_t res = 0;
+
+  if(eeprom_data.total_pack_capacity > 0)
+  {
+    res = eeprom_data.current_charge_level / (eeprom_data.total_pack_capacity / 10000);
+    if(res > 10000) res = 10000;
+  }
+
+  return abs(res);
 }
 
 //- **************************************************************************
@@ -211,10 +228,7 @@ void bms_mainloop(void)
   //Handle the state machinery.
   while (1)
   {
-#ifdef SERIAL_DEBUG
-    sprintf(debug_msg_buffer, "BMS: %s\r\n", bms_state_names[bms_state]);
-    serial_debug_send_message(debug_msg_buffer);
-#endif
+    BMS_PRINT("BMS: %s\r\n", bms_state_names[bms_state]);
   
     switch (bms_state)
     {
@@ -366,6 +380,7 @@ static int16_t bms_read_temperature(void)
   int16_t tc1_temp;
   int16_t tc2_temp;
   uint16_t adc_value;
+  int16_t temp_diff;;
 
   // get tc1
   adc_value = adc_convert_channel(BMS_ADC_CH_TC1);
@@ -375,13 +390,16 @@ static int16_t bms_read_temperature(void)
   tc2_temp = NTC_ADC2Temperature(adc_value);
 
   // return temperature point between two thermistors if they have plausible values - no more than 5 degree difference
-  if(abs(tc1_temp - tc2_temp) < 50)
+  temp_diff = tc1_temp - tc2_temp;
+
+  if(abs(temp_diff) < 50)
   {
     return (tc1_temp + tc2_temp) >> 1;
   }
   else
   {
-    return 256;
+    BMS_PRINT("BMS:TEMP ERROR: %d\r\n", temp_diff);
+    return 256 * 10;
   }
 }
 
@@ -401,38 +419,29 @@ static bool bms_is_safe_to_discharge(void)
     {
       bms_error = BMS_ERR_PACK_DISCHARGED;
       
-      #ifdef SERIAL_DEBUG
-      sprintf(debug_msg_buffer, "%s: Cell voltages too low\r\n", __FUNCTION__);
-      serial_debug_send_message(debug_msg_buffer);
+#ifdef SERIAL_DEBUG
+      BMS_PRINT("%s: Cell voltages too low\r\n", __FUNCTION__);
       
       for (int cell=0; cell<7; ++cell)
       {
-        sprintf(debug_msg_buffer, "Cell %d: %d mV, min %d mV\r\n", cell, cell_voltages[cell], CELL_LOWEST_DISCHARGE_VOLTAGE);
-        serial_debug_send_message(debug_msg_buffer);
+        BMS_PRINT("Cell %d: %d mV, min %d mV\r\n", cell, cell_voltages[cell], CELL_LOWEST_DISCHARGE_VOLTAGE);
       }
-      #endif
+#endif
     }
   }
   //Check pack temperature remains in acceptable range
-  int temp = bms_read_temperature();
-  if (temp/10  > MAX_PACK_TEMPERATURE)
+  pack_temperature = bms_read_temperature();
+  int temp = pack_temperature / 10;
+
+  if (temp  > MAX_PACK_TEMPERATURE)
   {
     bms_error = BMS_ERR_PACK_OVERTEMP;
-    
-    #ifdef SERIAL_DEBUG
-    sprintf(debug_msg_buffer, "%s : Pack overtemp %d 'C, max %d\r\n",__FUNCTION__ ,  temp/10, MAX_PACK_TEMPERATURE);
-    serial_debug_send_message(debug_msg_buffer);
-    #endif
-
+    BMS_PRINT("%s : Pack overtemp %d 'C, max %d\r\n",__FUNCTION__ ,  temp, MAX_PACK_TEMPERATURE);
   }
-  else if (temp/10 < MIN_PACK_DISCHARGE_TEMP)
+  else if (temp < MIN_PACK_DISCHARGE_TEMP)
   {
     bms_error = BMS_ERR_PACK_UNDERTEMP;
-
-    #ifdef SERIAL_DEBUG
-    sprintf(debug_msg_buffer, "%s: Pack undertemp %d 'C, min %d\r\n", __FUNCTION__ , temp/10, MIN_PACK_DISCHARGE_TEMP);
-    serial_debug_send_message(debug_msg_buffer);
-    #endif
+    BMS_PRINT("%s: Pack undertemp %d 'C, min %d\r\n", __FUNCTION__ , temp, MIN_PACK_DISCHARGE_TEMP);
   }
   
   //Check sys_stat
@@ -444,32 +453,21 @@ static bool bms_is_safe_to_discharge(void)
     bms_error = BMS_ERR_OVERCURRENT;
     bq7693_write_register(SYS_STAT, 0x01);
 
-    #ifdef SERIAL_DEBUG
-    sprintf(debug_msg_buffer, "%s: BMS IC Overcurrent Trip\r\n", __FUNCTION__);
-    serial_debug_send_message(debug_msg_buffer);
-    #endif
-
+    BMS_PRINT("%s: BMS IC Overcurrent Trip\r\n", __FUNCTION__);
   }
   else if (sys_stat & 0x02)
   {
     bms_error = BMS_ERR_SHORTCIRCUIT;
     bq7693_write_register(SYS_STAT, 0x02);
 
-    #ifdef SERIAL_DEBUG
-    sprintf(debug_msg_buffer, "%s: BMS IC Short Circuit Trip\r\n", __FUNCTION__);
-    serial_debug_send_message(debug_msg_buffer);
-    #endif
-
+    BMS_PRINT("%s: BMS IC Short Circuit Trip\r\n", __FUNCTION__);
   }
   else if (sys_stat & 0x08)
   {
     bms_error = BMS_ERR_UNDERVOLTAGE;
     bq7693_write_register(SYS_STAT, 0x08);
 
-    #ifdef SERIAL_DEBUG
-    sprintf(debug_msg_buffer, "%s: BMS IC Undervoltage Trip\r\n", __FUNCTION__);
-    serial_debug_send_message(debug_msg_buffer);
-    #endif
+    BMS_PRINT("%s: BMS IC Undervoltage Trip\r\n", __FUNCTION__);
   }
 
   if (bms_error == BMS_ERR_NONE)
@@ -494,21 +492,19 @@ static bool bms_is_safe_to_charge(void)
     if ( cell_voltages[i] < CELL_LOWEST_CHARGE_VOLTAGE )
     {
       bms_error = BMS_ERR_CELL_FAIL;
-      #ifdef SERIAL_DEBUG
-      sprintf(debug_msg_buffer, "%s: Cell %d below min charge voltage %d, min %d\r\n", __FUNCTION__, i, cell_voltages[i], CELL_LOWEST_CHARGE_VOLTAGE);
-      serial_debug_send_message(debug_msg_buffer);
-      #endif
+      BMS_PRINT("%s: Cell %d below min charge voltage %d, min %d\r\n", __FUNCTION__, i, cell_voltages[i], CELL_LOWEST_CHARGE_VOLTAGE);
     }
   }
 
   //Check pack temperature acceptable (<=60'C)
-  int temp = bms_read_temperature();
+  pack_temperature = bms_read_temperature();
+  int temp = pack_temperature / 10;
 
-  if (temp/10  > MAX_PACK_TEMPERATURE)
+  if (temp  > MAX_PACK_TEMPERATURE)
   {
     bms_error = BMS_ERR_PACK_OVERTEMP;
   }
-  else if (temp/10 < MIN_PACK_CHARGE_TEMP)
+  else if (temp < MIN_PACK_CHARGE_TEMP)
   {
     bms_error = BMS_ERR_PACK_UNDERTEMP;
   }
@@ -542,11 +538,10 @@ static bool bms_is_pack_full(void)
   uint16_t *cell_voltages = bq7693_get_cell_voltages();
 
 #ifdef SERIAL_DEBUG
-  for (int i=0; i<7; ++i)
-  {
-    //char message[40];
-    //sprintf(message, "Cell %d: %d mV, target %d mV\r\n", i, cell_voltages[i], CELL_FULL_CHARGE_VOLTAGE);
-  }
+  //for (int i=0; i<7; ++i)
+  //{
+  //  BMS_PRINT("Cell %d: %d mV, target %d mV\r\n", i, cell_voltages[i], CELL_FULL_CHARGE_VOLTAGE);
+  //}
 #endif
 
   //If any cells are at their full charge voltage, we are full.
@@ -580,6 +575,11 @@ static void bms_handle_idle(void)
       bms_state = BMS_TRIGGER_PULLED;
       return;
     }
+    else if(force_sleep == true)
+    {
+      sw_timer_stop(&bms_timer); // go to sleep
+    }
+
     sw_timer_delay_ms(50);
 
   } while (false == sw_timer_is_elapsed(&bms_timer, ((IDLE_TIME * 1000ul))));
@@ -631,6 +631,10 @@ static void bms_handle_sleep(void)
 //- **************************************************************************
 static void bms_handle_discharging(void)
 {
+#ifdef SERIAL_DEBUG
+  uint8_t debug_print_cnt = 0;
+#endif
+
 	if (bms_is_safe_to_discharge()) 
   {
 		//Sanity check, hopefully already checked prior to here!
@@ -652,6 +656,7 @@ static void bms_handle_discharging(void)
       bms_state = BMS_IDLE;
       return;
     }
+
     if (!bms_is_safe_to_discharge()) 
     {
       //A fault has occurred.
@@ -659,6 +664,14 @@ static void bms_handle_discharging(void)
       bms_state = BMS_FAULT;
       return;
     }
+
+#ifdef SERIAL_DEBUG
+    if(++debug_print_cnt > 5)
+    {
+      BMS_PRINT("BMS:DISCHARGING I:%d mA @ %ld mAH, C:%ld mAH, T:%d'C\r\n", abs(current_filt_mA), (eeprom_data.current_charge_level / 1000), (eeprom_data.total_pack_capacity / 1000), (int16_t)(pack_temperature / 10));
+      debug_print_cnt = 0;
+    }
+#endif
 
     sw_timer_delay_ms(60);
   }
@@ -734,10 +747,7 @@ static void bms_handle_charger_connected(void)
 //- **************************************************************************
 static void bms_handle_charger_connected_not_charging(void)
 {
-  //Wait up to 30 seconds to see if someone unplugs the charger.
-  //If so, to idle.
-  //If not, to sleep.
-  for (int i=0; i<30; ++i)
+  while(1)
   {
     if (!port_pin_get_input_level(CHARGER_CONNECTED_PIN))
     {
@@ -747,9 +757,6 @@ static void bms_handle_charger_connected_not_charging(void)
     
     sw_timer_delay_ms(1000);
   }
-
-  //Sleep then!
-  bms_state = BMS_SLEEP;
 }
 
 //- **************************************************************************
@@ -757,6 +764,10 @@ static void bms_handle_charger_connected_not_charging(void)
 //- **************************************************************************
 static void bms_handle_charging(void)
 {
+#ifdef SERIAL_DEBUG
+  uint8_t debug_print_cnt = 0;
+#endif
+
   //Sanity check...
   if (!bms_is_safe_to_charge()) 
   {
@@ -810,9 +821,9 @@ static void bms_handle_charging(void)
     if (bms_is_pack_full()) 
     {
 #ifdef SERIAL_DEBUG
-      sprintf(debug_msg_buffer, "Charging paused - cell full, attempt %d of %d\r\n", charge_pause_counter, FULL_CHARGE_PAUSE_COUNT);
-      serial_debug_send_message(debug_msg_buffer);
+      BMS_PRINT("BMS:CHARGING Paused - full, attempt %d of %d\r\n", charge_pause_counter, FULL_CHARGE_PAUSE_COUNT);
       serial_debug_send_cell_voltages();
+      debug_print_cnt = 0;
 #endif
       //Pause the charging.
       port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
@@ -821,6 +832,7 @@ static void bms_handle_charging(void)
       //Delay for 30 seconds, then go and try again.
       for (int i=0; i<30; ++i) 
       {
+        sw_timer_delay_ms(1000);
         //If it has, abandon the charge process and return to main loop
         if (!port_pin_get_input_level(CHARGER_CONNECTED_PIN)) 
         {
@@ -834,6 +846,16 @@ static void bms_handle_charging(void)
       //Restart charging
       port_pin_set_output_level(ENABLE_CHARGE_PIN, true);
       bq7693_enable_charge();
+    }
+    else
+    {
+#ifdef SERIAL_DEBUG
+      if(++debug_print_cnt > 5)
+      {
+        BMS_PRINT("BMS:CHARGING I:%d mA @ %ld mAH, C:%ld mAH, T:%d'C\r\n", abs(current_filt_mA), (eeprom_data.current_charge_level / 1000), (eeprom_data.total_pack_capacity / 1000), (int16_t)(pack_temperature / 10));
+        debug_print_cnt = 0;
+      }
+#endif
     }
     
     if (charge_pause_counter >= FULL_CHARGE_PAUSE_COUNT) 
@@ -850,14 +872,14 @@ static void bms_handle_charging(void)
       //Set charge level to equal capacity.
       eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
 
+      BMS_PRINT("BMS:CHARGING Stopped\r\n");
 #ifdef SERIAL_DEBUG
-      serial_debug_send_message("Charging stopped - cells at capacity\r\n");
       serial_debug_send_pack_capacity();
 #endif
       return;
     }
 
-    sw_timer_delay_ms(60);
+    sw_timer_delay_ms(50);
   }
 }
 
@@ -893,7 +915,7 @@ static void bms_handle_charger_unplugged(void)
   }
 
 #ifdef SERIAL_DEBUG
-  serial_debug_send_message("Charger unplugged\r\n");
+  BMS_PRINT("Charger unplugged\r\n");
   serial_debug_send_cell_voltages();
 #endif
 
