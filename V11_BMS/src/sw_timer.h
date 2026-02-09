@@ -12,6 +12,7 @@
 #include "asf.h"
 #include "protocol.h"
 #include "bms_adc.h"
+#include "bms.h"
 
 /*-----------------------------------------------------------------------------
   DEFINITION OF GLOBAL TYPES
@@ -25,6 +26,7 @@ typedef uint32_t sw_timer;
 #define SW_TIMER_SERVICES()   \
 { \
   prot_mainloop(); \
+  bms_interrupt_process(); \
 }
 
 /*-----------------------------------------------------------------------------

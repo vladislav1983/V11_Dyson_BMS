@@ -42,6 +42,8 @@ volatile bool     force_sleep = false;
 #define BMS_PRINT(...)
 #endif
 
+#define ROUND(x) (((x) + 0.5))
+
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
 -----------------------------------------------------------------------------*/
@@ -62,7 +64,7 @@ static uint16_t charge_pause_counter = 0;
 static uint8_t  charging_leds_duty = 0;
 static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
-
+static bool process_bms_interrupt = false;
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
@@ -149,51 +151,66 @@ void bms_init(void)
 //- **************************************************************************
 void bms_interrupt_callback(void)
 {
+  process_bms_interrupt = true;
+}
+
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
+void bms_interrupt_process(void)
+{
   uint8_t sys_stat;
-  bq7693_read_register(SYS_STAT, 1, &sys_stat);
-  if (sys_stat & 0x80)
+
+  if(true == process_bms_interrupt)
   {
-    //Got a coulomb charger count ready.
-    int32_t ccVal = bq7693_read_cc();
-    
-    //This needs better handling....
-    current_mA = (ccVal * (uint16_t)(8.44f * 4096.0f)) / 4096;
-    #define FILT_MS   (500ul)
-    #define PERIOD_MS (250ul)
-    current_filt_sum_mA += ( (int32_t)((65536.0 * PERIOD_MS) / FILT_MS) * (int16_t)(current_mA - (int16_t)(current_filt_sum_mA >> 16) ) );
-    current_filt_mA = current_filt_sum_mA >> 16;
-    
-    //Ignore tiny values.
-    if ( (ccVal > 0 && ccVal > 2)  || (ccVal < 0 && ccVal < -2) )
+    bq7693_read_register(SYS_STAT, 1, &sys_stat);
+
+    if (sys_stat & 0x80)
     {
-      int32_t cc_uah;
-      //i = V/R
-      //sense resistor = 1mOhm
-      //microV / milliOhms gives current in mA.
-      //so ccVal has current in mA.
-      //Dividing by 14400 would give mAH. (number of 250mS periods in 1 hr.
-      //Dividing by 14.4 will give microAH (what we want)
-      // 14.4 = ((3600 * 1000) / 250ms) / 1000mAh
-      cc_uah = ccVal * (int16_t)(((8.44f * 250.0f * 32768.0f) / (3600.0f)));
-      cc_uah /= 32768;
-      eeprom_data.current_charge_level += cc_uah;
+      //Got a coulomb charger count ready.
+      int32_t ccVal = bq7693_read_cc();
       
-      //We thought the pack was full, but it's still charging, so we need to update its' size.
-      if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
-      {
-        eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
-      }
+      //This needs better handling....
+      current_mA = (ccVal * (uint16_t)(8.44f * 4096.0f)) / 4096;
+      #define FILT_MS   (500ul)
+      #define PERIOD_MS (250ul)
+      current_filt_sum_mA += ( (int32_t)((65536.0 * PERIOD_MS) / FILT_MS) * (int16_t)(current_mA - (int16_t)(current_filt_sum_mA >> 16) ) );
+      current_filt_mA = current_filt_sum_mA >> 16;
       
-      //We thought the pack was empty, but it isn't, so again, we need to update our estimate of what it can hold!
-      if (eeprom_data.current_charge_level < 0)
+      //Ignore tiny values.
+      if ( (ccVal > 0 && ccVal > 2)  || (ccVal < 0 && ccVal < -2) )
       {
-        //subtracting negative numbers will increment the pack capacity.
-        eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
-        eeprom_data.current_charge_level = 0;
+        int32_t cc_uah;
+        //i = V/R
+        //sense resistor = 1mOhm
+        //microV / milliOhms gives current in mA.
+        //so ccVal has current in mA.
+        //Dividing by 14400 would give mAH. (number of 250mS periods in 1 hr.
+        //Dividing by 14.4 will give microAH (what we want)
+        // 14.4 = ((3600 * 1000) / 250ms) / 1000mAh
+        cc_uah = ccVal * (int16_t)(((8.44f * 250.0f * 32768.0f) / (3600.0f)));
+        cc_uah /= 32768;
+        eeprom_data.current_charge_level += cc_uah;
+        
+        //We thought the pack was full, but it's still charging, so we need to update its' size.
+        if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
+        {
+          eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
+        }
+        
+        //We thought the pack was empty, but it isn't, so again, we need to update our estimate of what it can hold!
+        if (eeprom_data.current_charge_level < 0)
+        {
+          //subtracting negative numbers will increment the pack capacity.
+          eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
+          eeprom_data.current_charge_level = 0;
+        }
       }
+      //Update the CC bit so it'll refire in another 250mS as per datasheet.
+      bq7693_write_register(SYS_STAT, 0x80);//Clear CC bit.
     }
-    //Update the CC bit so it'll refire in another 250mS as per datasheet.
-    bq7693_write_register(SYS_STAT, 0x80);//Clear CC bit.
+
+    process_bms_interrupt = false;
   }
 }
 
@@ -207,10 +224,10 @@ uint16_t bms_get_soc_x100(void)
 
   if(eeprom_data.total_pack_capacity > 0 && eeprom_data.current_charge_level > 0)
   {
-    uint32_t current_charge_level = eeprom_data.current_charge_level >> 13;
-    uint16_t total_pack_capacity  = eeprom_data.total_pack_capacity  >> 13;
+    uint32_t current_charge_level = eeprom_data.current_charge_level;
+    uint16_t total_pack_capacity  = eeprom_data.total_pack_capacity  >> 10;
     
-    soc = (current_charge_level * (100 * 100)) / total_pack_capacity;
+    soc = (current_charge_level * (uint16_t)ROUND((100.0f * 100.0f) / 1024.0f)) / total_pack_capacity;
     soc = (soc > 10000) ? 10000 : ((soc == 0) ? 100 : soc);
   }
 
@@ -311,6 +328,7 @@ void bms_mainloop(void)
     }
 
     prot_mainloop();
+    bms_interrupt_process();
   }
 }
 
@@ -669,7 +687,7 @@ static void bms_handle_discharging(void)
   {
 		//Sanity check, hopefully already checked prior to here!
 		bq7693_enable_discharge();
-    sw_timer_delay_ms(300);
+    sw_timer_delay_ms(100);
     prot_set_trigger(true);
 	}
 
