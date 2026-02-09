@@ -98,6 +98,8 @@ void serial_init()
 //- **************************************************************************
 void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
 {
+  NVIC_DisableIRQ(SERCOM2_IRQn);
+  usart_disable_callback(&usart_instance, USART_CALLBACK_BUFFER_RECEIVED);
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_RX);
   usart_enable_transceiver(&usart_instance, USART_TRANSCEIVER_TX);
 
@@ -105,6 +107,8 @@ void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
   
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_TX);
   usart_enable_transceiver(&usart_instance, USART_TRANSCEIVER_RX);
+  usart_enable_callback(&usart_instance, USART_CALLBACK_BUFFER_RECEIVED);
+  NVIC_EnableIRQ(SERCOM2_IRQn);
 }
 
 /*-----------------------------------------------------------------------------

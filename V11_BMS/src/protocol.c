@@ -39,8 +39,7 @@
 #define MSG_DELIM_CHAR                      0x12
 #define MSG_DELIM_SIZE                      1
 #define CRC_SIZE                            4
-#define TX_WAIT_TIME                        (5 / SW_TIMER_TICK_MS)
-#define COM_TIMEOUT                         (5 / SW_TIMER_TICK_MS)
+#define TX_WAIT_TIME                        (20 / SW_TIMER_TICK_MS)
 
 #define BYTE_0x12_REPLACEMENT               (0xDEDB)  // 0x12 is replaced with 0xDB 0xDE to avoid framing error
 #define BYTE_0xDB_REPLACEMENT               (0xDDDB)  // 0xDB is replaced with 0xDB 0xDD to avoid framing error
@@ -74,6 +73,7 @@ typedef enum
 {
   PROT_RX_INIT,
   PROT_RX_WAIT_START,
+  PROT_RX_CHECK_SIZE,
   PROT_RX_FRAME,
   PROT_RX_FRAME_RECEIVED
 }rx_states;
@@ -97,6 +97,7 @@ typedef struct
   uint8_t  msg_id_size; // from byte 1, message id/size
   uint8_t  msg_size;
   sw_timer timestamp;
+  int32_t  time_diff;
 }rx_debug_t;
 
 /*-----------------------------------------------------------------------------
@@ -297,7 +298,6 @@ bool prot_is_vacuum_connected(void)
 //- **************************************************************************
 void prot_reset(void)
 {
-  PROT_PRINT("PROT:RESET TO PROT_INIT\r\n");
   prot_state = PROT_INIT;
 }
 
@@ -312,7 +312,6 @@ void prot_mainloop(void)
     //------------------------------------------------------------------------
     case PROT_INIT:
     {
-      PROT_PRINT("PROT_INIT\r\n");
       serial_buffer_level = 0;
       prot_state = PROT_WAIT_FRAME;
     }
@@ -411,7 +410,21 @@ void prot_serial_rx_callback(uint8_t ch)
       if(ch == MSG_DELIM_CHAR)
       {
         serial_buffer_rx[serial_buffer_level++] = ch;
+        rx_state = PROT_RX_CHECK_SIZE;
+      }
+    }
+    break;
+    case PROT_RX_CHECK_SIZE:
+    {
+    // the byte after frame delimiter is message size, filter invalid sizes from the beginning
+      if(ch > 15 && ch < 35)  //check msg size
+      {
+        serial_buffer_rx[serial_buffer_level++] = ch;
         rx_state = PROT_RX_FRAME;
+      }
+      else
+      {
+        rx_state = PROT_RX_INIT;
       }
     }
     break;
@@ -433,18 +446,23 @@ void prot_serial_rx_callback(uint8_t ch)
           serial_buffer_rx[serial_buffer_level++] = ch;
         }
 
-        rx_state = (ch == MSG_DELIM_CHAR) ? (PROT_RX_FRAME_RECEIVED) : (rx_state); // check new frame is detected
-#if (PROT_DEBUG_RX_RAW != 0)
-
-        if((rx_debug_raw_id_mask == 0) || ((rx_debug_raw_id_mask ^ serial_buffer_rx[1]) == 0))
+        if(ch == MSG_DELIM_CHAR)
         {
-          // store debug info
-          rx_debug_raw[rx_debug_raw_cnt].msg_id_size = serial_buffer_rx[1];
-          rx_debug_raw[rx_debug_raw_cnt].msg_size    = serial_buffer_level;
-          sw_timer_start((sw_timer *)&rx_debug_raw[rx_debug_raw_cnt].timestamp);
-          rx_debug_raw_cnt = (rx_debug_raw_cnt + 1) % (sizeof(rx_debug_raw) /sizeof(rx_debug_raw[0]) );
-        }
+          rx_state = PROT_RX_FRAME_RECEIVED;
+
+#if (PROT_DEBUG_RX_RAW != 0)
+          if((rx_debug_raw_id_mask == 0) || ((rx_debug_raw_id_mask ^ serial_buffer_rx[1]) == 0))
+          {
+            // store debug info
+            rx_debug_raw[rx_debug_raw_cnt].msg_id_size = serial_buffer_rx[1];
+            rx_debug_raw[rx_debug_raw_cnt].msg_size    = serial_buffer_level;
+            sw_timer_start((sw_timer *)&rx_debug_raw[rx_debug_raw_cnt].timestamp);
+            if(rx_debug_raw_cnt > 0)
+              rx_debug_raw[rx_debug_raw_cnt].time_diff = rx_debug_raw[rx_debug_raw_cnt].timestamp - rx_debug_raw[rx_debug_raw_cnt - 1].timestamp;
+            rx_debug_raw_cnt = (rx_debug_raw_cnt + 1) % (sizeof(rx_debug_raw) /sizeof(rx_debug_raw[0]) );
+          }
 #endif
+        }
       }
       else
       {
@@ -516,10 +534,10 @@ static prot_states prot_analyze_frame(prot_states current_state)
               if((rx_debug_analyzed_id_mask == 0) || ((rx_debug_analyzed_id_mask ^ serial_buffer_rx[1]) == 0))
               {
                 // store debug info
-                rx_debug_analyzed[rx_debug_raw_cnt].msg_id_size = serial_buffer_rx[1];
-                rx_debug_analyzed[rx_debug_raw_cnt].msg_size    = serial_buffer_level;
-                sw_timer_start((sw_timer *)&rx_debug_analyzed[rx_debug_raw_cnt].timestamp);
-                rx_debug_raw_cnt = (rx_debug_raw_cnt + 1) % (sizeof(rx_debug_analyzed) /sizeof(rx_debug_analyzed[0]) );
+                rx_debug_analyzed[rx_debug_analyzed_cnt].msg_id_size = serial_buffer_rx[1];
+                rx_debug_analyzed[rx_debug_analyzed_cnt].msg_size    = serial_buffer_level;
+                sw_timer_start((sw_timer *)&rx_debug_analyzed[rx_debug_analyzed_cnt].timestamp);
+                rx_debug_analyzed_cnt = (rx_debug_analyzed_cnt + 1) % (sizeof(rx_debug_analyzed) /sizeof(rx_debug_analyzed[0]) );
               }
 #endif
               // leave the loop

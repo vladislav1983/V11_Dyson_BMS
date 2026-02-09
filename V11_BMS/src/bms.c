@@ -118,6 +118,7 @@ void bms_init(void)
   //Initialise the sw_timer
   delay_init();
   sw_timer_init();
+  prot_init();
 
   //Set up the pins
   pins_init();
@@ -141,7 +142,7 @@ void bms_init(void)
   //Enable interrupts
   interrupts_init();
 
-#ifdef SERIAL_DEBUG
+#if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
   serial_debug_init();
 #endif
 }
@@ -283,7 +284,6 @@ void bms_mainloop(void)
           bms_state = BMS_FAULT;
 
         port_pin_set_output_level(PRECHARGE_PIN, true);
-        prot_init();
 
       break;
       //-----------------------------------------------------------------------
