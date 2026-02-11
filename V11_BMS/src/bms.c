@@ -799,6 +799,7 @@ static void bms_handle_charger_connected_not_charging(void)
   {
     if (!port_pin_get_input_level(CHARGER_CONNECTED_PIN))
     {
+    port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
       bms_state = BMS_IDLE;
       return;
     }
@@ -913,7 +914,7 @@ static void bms_handle_charging(void)
     {
       //After FULL_CHARGE_PAUSE_COUNT pauses, we are full.
       //Disable the charging
-      port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
+      port_pin_set_output_level(ENABLE_CHARGE_PIN, true);
       bq7693_disable_charge();
       
       leds_off();
