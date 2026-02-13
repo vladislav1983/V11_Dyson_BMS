@@ -2,7 +2,7 @@
  * bms_adc.h
  *
  * Created: 21-Jan-26 10:10:14
- *  Author: GYV1SF4
+ *  Author: Vladislav Gyurov
  */ 
 
 
@@ -20,7 +20,7 @@ typedef enum
 {
   BMS_ADC_CH_TC1,
   BMS_ADC_CH_TC2,
-  BMS_ADC_MODE_BUTTON,
+  //BMS_ADC_MODE_BUTTON,
   BMS_ADC_CH_NUM
 }bms_adc_ch_t;
 

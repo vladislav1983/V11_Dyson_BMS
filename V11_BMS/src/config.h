@@ -45,7 +45,7 @@
 // Limits disabled, as V15 & V11 have 2xRTDs, now unknown where are assigned, therefore even max temp doesnt work
 // Do not charge battery when hot and not supervised! This is for Debug only for V15, battery pack outputs 24V
 
-#define IDLE_TIME 60 * 5 // Idle time in seconds. Pack will go into SHIP/deep sleep mode if nothing happens in this duration
+#define IDLE_TIME 60 * 30 // Idle time in seconds. Pack will go into SHIP/deep sleep mode if nothing happens in this duration
 
 #define FULL_CHARGE_PAUSE_COUNT 10 //Once a cell reaches max charge volts, pause for 30 seconds and retry, this many times.
 

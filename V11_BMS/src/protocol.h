@@ -2,7 +2,7 @@
  * protocol.h
  *
  * Created: 21-Jan-26 10:36:36
- *  Author: GYV1SF4
+ *  Author: Vladislav Gyurov
  */ 
 
 
@@ -35,6 +35,8 @@
 extern void prot_init(void);
 extern void prot_set_trigger(bool trigger_state);
 extern void prot_reset(void);
+extern bool prot_get_sleep_flag(void);
+extern bool prot_get_vacuum_connected(void);
 extern void prot_mainloop(void);
 extern void prot_serial_rx_callback(uint8_t ch);
 

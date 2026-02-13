@@ -2,7 +2,7 @@
  * ntc.c
  *
  * Created: 21-Jan-26 10:02:57
- *  Author: GYV1SF4
+ *  Author: Vladislav Gyurov
  */ 
  /*-----------------------------------------------------------------------------
     INCLUDE FILES

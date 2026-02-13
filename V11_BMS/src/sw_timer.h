@@ -2,7 +2,7 @@
  * sw_timer.h
  *
  * Created: 21-Jan-26 16:31:23
- *  Author: GYV1SF4
+ *  Author: Vladislav Gyurov
  */ 
  #ifndef SW_TIMER_H_
 #define SW_TIMER_H_

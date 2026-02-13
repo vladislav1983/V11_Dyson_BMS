@@ -2,7 +2,7 @@
  * crc.c
  *
  * Created: 21-Jan-26 12:27:18
- *  Author: GYV1SF4
+ *  Author: Vladislav Gyurov
  */ 
  /*-----------------------------------------------------------------------------
     INCLUDE FILES
@@ -51,8 +51,8 @@ static const uint32_t c_wCRC32Table[16] =
   0x9B64C2B0, 0x86D3D2D4, 0xA00AE278, 0xBDBDF21C,
 };
 
-const uint16_t crc16_C9A7_table_lo[] = { 0x0000,0x5B1B,0xB636,0xED2D,0xA74B,0xFC50,0x117D,0x4A66,0x85B1,0xDEAA,0x3387,0x689C,0x22FA,0x79E1,0x94CC,0xCFD7 };
-const uint16_t crc16_C9A7_table_hi[] = { 0x0000,0xC045,0x4BAD,0x8BE8,0x975A,0x571F,0xDCF7,0x1CB2,0xE593,0x25D6,0xAE3E,0x6E7B,0x72C9,0xB28C,0x3964,0xF921 };
+static const uint16_t crc16_C9A7_table_lo[] = { 0x0000,0x5B1B,0xB636,0xED2D,0xA74B,0xFC50,0x117D,0x4A66,0x85B1,0xDEAA,0x3387,0x689C,0x22FA,0x79E1,0x94CC,0xCFD7 };
+static const uint16_t crc16_C9A7_table_hi[] = { 0x0000,0xC045,0x4BAD,0x8BE8,0x975A,0x571F,0xDCF7,0x1CB2,0xE593,0x25D6,0xAE3E,0x6E7B,0x72C9,0xB28C,0x3964,0xF921 };
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
@@ -101,7 +101,7 @@ uint32_t calc_crc32(uint8_t * data_ptr, uint16_t len)
 //- **************************************************************************
 uint16_t calc_crc16_C9A7(uint8_t * data_ptr, uint16_t len)
 {
-  uint8_t tbl_tdx;
+  uint16_t tbl_tdx;
   uint16_t i;
   uint16_t crc_u16 = CRC16_INIT_0x396F_REFLECT;
 

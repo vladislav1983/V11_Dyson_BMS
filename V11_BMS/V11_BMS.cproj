@@ -269,7 +269,7 @@
           <SwdClock>4000000</SwdClock>
         </InterfaceProperties>
         <InterfaceName>SWD</InterfaceName>
-        <JlinkConfigFile>C:\Users\gyv1sf4\Documents\V11_Dyson_BMS\V11_BMS\jlink.config</JlinkConfigFile>
+        <JlinkConfigFile>C:\Users\VG\Documents\V11_Dyson_BMS\V11_BMS\jlink.config</JlinkConfigFile>
       </ToolOptions>
       <ToolType>com.atmel.avrdbg.tool.samice</ToolType>
       <ToolNumber>69650156</ToolNumber>

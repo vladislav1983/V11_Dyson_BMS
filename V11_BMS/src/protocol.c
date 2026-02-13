@@ -2,7 +2,7 @@
  * protocol.c
  *
  * Created: 21-Jan-26 10:36:23
- *  Author: GYV1SF4
+ *  Author: Vladislav Gyurov
  */ 
  /*-----------------------------------------------------------------------------
     INCLUDE FILES
@@ -105,6 +105,7 @@ typedef struct
     DEFINITION OF LOCAL VARIABLES
 -----------------------------------------------------------------------------*/
 static sw_timer wait_timer = 0;
+static sw_timer session_timer = 0;
 static bool     prot_trigger_state = false;
 
 uint8_t serial_buffer_rx[80]       = {0};
@@ -116,6 +117,8 @@ static uint8_t tx_msg_idx          = 0;
 static uint8_t tx_length           = 0;
 static rx_states rx_state          = PROT_RX_INIT;
 static bool sleep_flag             = false;
+static bool charger_connected_state_old = false;
+static bool vacuum_connected       = false;
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL VARIABLES
@@ -210,7 +213,7 @@ static const prot_cfg_t prot_cfg[] =
     .tx_callback      = prot_mode_sleep_callback,
     #ifdef PROT_DEBUG_PRINT
     .dump_bytes       = false,
-    .debug_str        = "SLEEP\r\n",
+    .debug_str        = "SLEEP_REQ\r\n",
     #endif
   },
   {
@@ -299,16 +302,49 @@ void prot_reset(void)
 //- **************************************************************************
 //! \brief
 //- **************************************************************************
+bool prot_get_sleep_flag(void)
+{
+  return sleep_flag;
+}
+
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
+bool prot_get_vacuum_connected(void)
+{
+  return vacuum_connected;
+}
+
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
 void prot_mainloop(void)
 {
+
+  if(true == sw_timer_is_elapsed(&session_timer, 2000))
+  {
+    vacuum_connected = false;
+  }
 
   switch(prot_state)
   {
     //------------------------------------------------------------------------
     case PROT_INIT:
     {
+      if(sleep_flag == true)
+      {
+        PROT_PRINT("WAKE\r\n");
+      }
+      // turn on motor voltage
+      port_pin_set_output_level(PRECHARGE_PIN, true);
+      port_pin_set_output_level(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, true);
+      // reset protocol state machine, wait for handshake
       serial_buffer_level = 0;
+      sleep_flag = false;
+      vacuum_connected = false;
       prot_state = PROT_WAIT_FRAME;
+      rx_state   = PROT_RX_INIT;
+      sw_timer_start(&session_timer);
     }
     break;
     //------------------------------------------------------------------------
@@ -352,14 +388,12 @@ void prot_mainloop(void)
     //------------------------------------------------------------------------
     case PROT_SLEEP:
     {
-      uint16_t mode_button = adc_convert_channel(BMS_ADC_MODE_BUTTON);
+      bool charger_connected = port_pin_get_input_level(CHARGER_CONNECTED_PIN);
 
-      if(mode_button > (4096/2))
+      if(    (port_pin_get_input_level(MODE_BUTTON)         == true)
+          || (port_pin_get_input_level(TRIGGER_PRESSED_PIN) == true)
+          || (charger_connected != charger_connected_state_old))
       {
-        PROT_PRINT("WAKE\r\n");
-        sleep_flag = false;
-        port_pin_set_output_level(PRECHARGE_PIN, true);
-        port_pin_set_output_level(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, true);
         prot_state = PROT_INIT;
       }
     }
@@ -476,58 +510,56 @@ static prot_states prot_analyze_frame(prot_states current_state)
   bool frame_found = false;
 
   if(rx_state == PROT_RX_FRAME_RECEIVED)
-  { // check it is correct frame 
-    if(serial_buffer_rx[0] == MSG_DELIM_CHAR)
+  { 
+    // extract frame size
+    msg_size = serial_buffer_rx[1] + (CRC_SIZE + MSG_DELIM_SIZE);
+    // check serial buffer is matching of frame size
+    if((uint16_t)serial_buffer_level == msg_size)
     {
-      // extract frame size
-      msg_size = serial_buffer_rx[1] + (CRC_SIZE + MSG_DELIM_SIZE);
-      // check serial buffer is matching of frame size
-      if((uint16_t)serial_buffer_level == msg_size)
-      {
-        for(size_t cfg_idx = 0; cfg_idx < (sizeof(prot_cfg) / sizeof(prot_cfg[0])); cfg_idx++)      
-        { // first check frame is matching to request size
-          if(serial_buffer_level == prot_cfg[cfg_idx].msg_req_size)
-          { // compare frame
-            if(0 == memcmp(serial_buffer_rx, prot_cfg[cfg_idx].msg_req_ptr, prot_cfg[cfg_idx].msg_req_cmp_size))
-            {
-              frame_found = true;
-              res         = prot_cfg[cfg_idx].dest_state;
-              tx_length   = prot_cfg[cfg_idx].msg_res_size;
-              tx_msg_idx  = cfg_idx;
+      for(size_t cfg_idx = 0; cfg_idx < (sizeof(prot_cfg) / sizeof(prot_cfg[0])); cfg_idx++)      
+      { // first check frame is matching to request size
+        if(serial_buffer_level == prot_cfg[cfg_idx].msg_req_size)
+        { // compare frame
+          if(0 == memcmp(serial_buffer_rx, prot_cfg[cfg_idx].msg_req_ptr, prot_cfg[cfg_idx].msg_req_cmp_size))
+          {
+            sw_timer_start(&session_timer);
+            frame_found = true;
+            res         = prot_cfg[cfg_idx].dest_state;
+            tx_length   = prot_cfg[cfg_idx].msg_res_size;
+            tx_msg_idx  = cfg_idx;
 
-              if(prot_cfg[cfg_idx].rx_callback != NULL)
-              {
-                prot_cfg[cfg_idx].rx_callback();
-              }
+            if(prot_cfg[cfg_idx].rx_callback != NULL)
+            {
+              prot_cfg[cfg_idx].rx_callback();
+            }
 
 #ifdef PROT_DEBUG_PRINT
-              if(prot_cfg[cfg_idx].debug_str != NULL)
-              {
-                PROT_PRINT(prot_cfg[cfg_idx].debug_str);
-              }
+            if(prot_cfg[cfg_idx].debug_str != NULL)
+            {
+              PROT_PRINT(prot_cfg[cfg_idx].debug_str);
+            }
 
-              if(prot_cfg[cfg_idx].dump_bytes != false)
+            if(prot_cfg[cfg_idx].dump_bytes != false)
+            {
+              PROT_PRINT("PROT:RX:");
+              for(uint8_t i = 0; i < serial_buffer_level; i++)
               {
-                PROT_PRINT("PROT:RX:");
-                for(uint8_t i = 0; i < serial_buffer_level; i++)
-                {
-                  PROT_PRINT("%02X ", serial_buffer_rx[i]);
-                }
-                PROT_PRINT("\r\n");
+                PROT_PRINT("%02X ", serial_buffer_rx[i]);
               }
+              PROT_PRINT("\r\n");
+            }
 #endif
 #if (PROT_DEBUG_RX_ANALYZED != 0)
-              if((rx_debug_analyzed_id_mask == 0) || ((rx_debug_analyzed_id_mask ^ serial_buffer_rx[1]) == 0))
-              {
-                // store debug info
-                rx_debug_analyzed[rx_debug_analyzed_cnt].msg_id_size = serial_buffer_rx[1];
-                sw_timer_start((sw_timer *)&rx_debug_analyzed[rx_debug_analyzed_cnt].timestamp);
-                rx_debug_analyzed_cnt = (rx_debug_analyzed_cnt + 1) % (sizeof(rx_debug_analyzed) /sizeof(rx_debug_analyzed[0]) );
-              }
-#endif
-              // leave the loop
-              break;
+            if((rx_debug_analyzed_id_mask == 0) || ((rx_debug_analyzed_id_mask ^ serial_buffer_rx[1]) == 0))
+            {
+              // store debug info
+              rx_debug_analyzed[rx_debug_analyzed_cnt].msg_id_size = serial_buffer_rx[1];
+              sw_timer_start((sw_timer *)&rx_debug_analyzed[rx_debug_analyzed_cnt].timestamp);
+              rx_debug_analyzed_cnt = (rx_debug_analyzed_cnt + 1) % (sizeof(rx_debug_analyzed) /sizeof(rx_debug_analyzed[0]) );
             }
+#endif
+            // leave the loop
+            break;
           }
         }
       }
@@ -566,13 +598,6 @@ static void prot_assemble_trigger_frame(void)
 //- **************************************************************************
 static void prot_data_frame_tx_callback(void)
 {
-  if(sleep_flag == true)
-  {
-    prot_state = PROT_SLEEP;
-    port_pin_set_output_level(PRECHARGE_PIN, false);
-    port_pin_set_output_level(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, false);
-    delay_ms(300);
-  }
 }
 
 //- **************************************************************************
@@ -587,37 +612,48 @@ static void prot_assemble_data_frame(void)
   uint8_t  rolling_counter;
   uint32_t crc;
 
-  // first copy rolling counter from serial buffer
-  rolling_counter = serial_buffer_rx[BMS_MSG_ROLLING_COUNTER_IDX];
+  // verify data frame crc
+  uint16_t crc16_calculated = calc_crc16_C9A7(&serial_buffer_rx[1], serial_buffer_level - sizeof(uint16_t) - 2);
+  uint16_t crc16_from_frame = (uint16_t)serial_buffer_rx[(serial_buffer_level - 1) - 2] | ((uint16_t)serial_buffer_rx[(serial_buffer_level - 1) - 1] << 8);
 
-  // copy data response to serial buffer
-  memcpy(serial_buffer_tmp, msg_bms_data_res, sizeof(msg_bms_data_res));
-  // copy back rolling counter to response
-  serial_buffer_tmp[BMS_MSG_ROLLING_COUNTER_IDX] = rolling_counter;
-  // fill charger connected state
-  serial_buffer_tmp[BMS_MSG_CHARGER_CONNECTED_IDX] = charger_connected;
-  // fill trigger state
-  serial_buffer_tmp[BMS_MSG_TRIGGER_IDX] = prot_trigger_state;
-  // fill estimated runtime in seconds
-  serial_buffer_tmp[BMS_MSG_BAT_RUNTIME_LO_IDX] = (uint8_t)((runtime_sec >> 0) & 0x00FF); // lsb first
-  serial_buffer_tmp[BMS_MSG_BAT_RUNTIME_HI_IDX] = (uint8_t)((runtime_sec >> 8) & 0x00FF);
+  if(crc16_calculated == crc16_from_frame)
+  {
+    // first copy rolling counter from serial buffer
+    rolling_counter = serial_buffer_rx[BMS_MSG_ROLLING_COUNTER_IDX];
 
-  // fill state of charge
-  serial_buffer_tmp[BMS_MSG_SOC_LO_IDX] = (uint8_t)((soc_percent_x100 >> 0) & 0x00FF); // lsb first
-  serial_buffer_tmp[BMS_MSG_SOC_HI_IDX] = (uint8_t)((soc_percent_x100 >> 8) & 0x00FF);
-  // unknown field, chinese bms put SOC here 
-  serial_buffer_tmp[BMS_MSG_SOC2_LO_IDX] = (uint8_t)((soc_percent_x100 >> 0) & 0x00FF); // lsb first
-  serial_buffer_tmp[BMS_MSG_SOC2_HI_IDX] = (uint8_t)((soc_percent_x100 >> 8) & 0x00FF);
+    // copy data response to serial buffer
+    memcpy(serial_buffer_tmp, msg_bms_data_res, sizeof(msg_bms_data_res));
+    // copy back rolling counter to response
+    serial_buffer_tmp[BMS_MSG_ROLLING_COUNTER_IDX] = rolling_counter;
+    // fill charger connected state
+    serial_buffer_tmp[BMS_MSG_CHARGER_CONNECTED_IDX] = charger_connected;
+    // fill trigger state
+    serial_buffer_tmp[BMS_MSG_TRIGGER_IDX] = prot_trigger_state;
+    // fill estimated runtime in seconds
+    serial_buffer_tmp[BMS_MSG_BAT_RUNTIME_LO_IDX] = (uint8_t)((runtime_sec >> 0) & 0x00FF); // lsb first
+    serial_buffer_tmp[BMS_MSG_BAT_RUNTIME_HI_IDX] = (uint8_t)((runtime_sec >> 8) & 0x00FF);
+
+    // fill state of charge
+    serial_buffer_tmp[BMS_MSG_SOC_LO_IDX] = (uint8_t)((soc_percent_x100 >> 0) & 0x00FF); // lsb first
+    serial_buffer_tmp[BMS_MSG_SOC_HI_IDX] = (uint8_t)((soc_percent_x100 >> 8) & 0x00FF);
+    // unknown field, chinese bms put SOC here 
+    serial_buffer_tmp[BMS_MSG_SOC2_LO_IDX] = (uint8_t)((soc_percent_x100 >> 0) & 0x00FF); // lsb first
+    serial_buffer_tmp[BMS_MSG_SOC2_HI_IDX] = (uint8_t)((soc_percent_x100 >> 8) & 0x00FF);
   
-  // calculate crc
-  crc = calc_crc32(serial_buffer_tmp, (sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)));
-  // fill crc into the message
-  serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 0] = (uint8_t)((crc >> 0)  & 0x000000FFul);  // lsb first
-  serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 1] = (uint8_t)((crc >> 8)  & 0x000000FFul);
-  serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 2] = (uint8_t)((crc >> 16) & 0x000000FFul);
-  serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 3] = (uint8_t)((crc >> 24) & 0x000000FFul);
+    // calculate crc
+    crc = calc_crc32(serial_buffer_tmp, (sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)));
+    // fill crc into the message
+    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 0] = (uint8_t)((crc >> 0)  & 0x000000FFul);  // lsb first
+    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 1] = (uint8_t)((crc >> 8)  & 0x000000FFul);
+    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 2] = (uint8_t)((crc >> 16) & 0x000000FFul);
+    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 3] = (uint8_t)((crc >> 24) & 0x000000FFul);
 
-  tx_length = prot_stuff_frame(serial_buffer_tx, serial_buffer_tmp, sizeof(serial_buffer_tx), sizeof(msg_bms_data_res));
+    tx_length = prot_stuff_frame(serial_buffer_tx, serial_buffer_tmp, sizeof(serial_buffer_tx), sizeof(msg_bms_data_res));
+  }
+  else
+  {
+    prot_state = PROT_WAIT_FRAME; // crc of data frame not match, wait next frame
+  }
 }
 
 //- **************************************************************************
@@ -666,6 +702,7 @@ static uint8_t prot_stuff_frame(uint8_t * dest, const uint8_t * src, size_t dest
 static void prot_mode_handshake_callback(void)
 {
   sleep_flag = false;
+  vacuum_connected = true;
 }
 
 //- **************************************************************************
@@ -674,6 +711,15 @@ static void prot_mode_handshake_callback(void)
 static void prot_mode_sleep_callback(void)
 {
   sleep_flag = true;
+  vacuum_connected = false;
+  // turn off motor supply
+  port_pin_set_output_level(PRECHARGE_PIN, false);
+  port_pin_set_output_level(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, false);
+  delay_ms(300);
+  prot_state = PROT_SLEEP;
+  // store charger connected state 
+  charger_connected_state_old = port_pin_get_input_level(CHARGER_CONNECTED_PIN);
+  PROT_PRINT("SLEEP\r\n");
 }
 
 /*-----------------------------------------------------------------------------

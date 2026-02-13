@@ -2,7 +2,7 @@
  * sw_timer.c
  *
  * Created: 21-Jan-26 16:31:01
- *  Author: GYV1SF4
+ *  Author: Vladislav Gyurov
  */ 
  /*-----------------------------------------------------------------------------
     INCLUDE FILES
