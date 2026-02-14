@@ -16,6 +16,7 @@
 #include "sw_timer.h"
 #include "protocol.h"
 #include "dio.h"
+#include "bms_wdt.h"
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL VARIABLES
@@ -146,6 +147,7 @@ void bms_init(void)
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
   serial_debug_init();
 #endif
+  bms_wdt_init();
 }
 
 //- **************************************************************************
@@ -347,6 +349,7 @@ void bms_mainloop(void)
     dio_mainloop();
     prot_mainloop();
     bms_interrupt_process();
+    bms_wdt_mainloop();
   }
 }
 

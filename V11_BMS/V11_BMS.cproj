@@ -469,6 +469,7 @@
       <Value>EXTINT_CALLBACK_MODE=true</Value>
       <Value>USART_CALLBACK_MODE=true</Value>
       <Value>TC_ASYNC=true</Value>
+      <Value>WDT_CALLBACK_MODE=true</Value>
     </ListValues>
   </armgcc.compiler.symbols.DefSymbols>
   <armgcc.compiler.directories.IncludePaths>
@@ -510,6 +511,7 @@
       <Value>../src/ASF/sam0/drivers/nvm</Value>
       <Value>../src/ASF/sam0/services/eeprom/emulator/main_array</Value>
       <Value>../src/ASF/sam0/drivers/tc</Value>
+      <Value>../src/ASF/sam0/drivers/wdt</Value>
     </ListValues>
   </armgcc.compiler.directories.IncludePaths>
   <armgcc.compiler.optimization.level>Optimize (-O1)</armgcc.compiler.optimization.level>
@@ -641,6 +643,7 @@
     <Folder Include="src\ASF\sam0\drivers\adc\adc_sam_d_r_h\" />
     <Folder Include="src\ASF\sam0\drivers\extint\" />
     <Folder Include="src\ASF\sam0\drivers\extint\extint_sam_d_r_h\" />
+    <Folder Include="src\ASF\sam0\drivers\wdt" />
     <Folder Include="src\ASF\sam0\drivers\tc" />
     <Folder Include="src\ASF\sam0\drivers\nvm\" />
     <Folder Include="src\ASF\sam0\drivers\nvm\quick_start_basic\" />
@@ -710,6 +713,24 @@
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="src\ASF\sam0\drivers\tc\tc_interrupt.h">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\ASF\sam0\drivers\wdt\wdt.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\ASF\sam0\drivers\wdt\wdt.h">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\ASF\sam0\drivers\wdt\wdt_callback.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\ASF\sam0\drivers\wdt\wdt_callback.h">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\bms_wdt.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\bms_wdt.h">
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="src\dio.c">

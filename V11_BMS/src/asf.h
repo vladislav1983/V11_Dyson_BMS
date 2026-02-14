@@ -128,4 +128,7 @@
 #include <tc.h>
 #include <tc_interrupt.h>
 
+// From module: WDT - Watchdog Timer (Polled APIs)
+#include <wdt.h>
+
 #endif // ASF_H

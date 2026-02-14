@@ -8,6 +8,12 @@ src\ASF\sam0\drivers\tc\tc.c
 
 src\ASF\sam0\drivers\tc\tc_interrupt.c
 
+src\ASF\sam0\drivers\wdt\wdt.c
+
+src\ASF\sam0\drivers\wdt\wdt_callback.c
+
+src\bms_wdt.c
+
 src\dio.c
 
 src\sw_timer.c

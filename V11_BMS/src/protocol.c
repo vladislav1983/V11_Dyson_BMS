@@ -144,7 +144,6 @@ uint16_t discarded_frames_cnt = 0;
 -----------------------------------------------------------------------------*/
 static prot_states prot_analyze_frame(prot_states current_state);
 static void prot_assemble_trigger_frame(void);
-static void prot_data_frame_tx_callback(void);
 static void prot_assemble_data_frame(void);
 static uint8_t prot_stuff_frame(uint8_t * dest, const uint8_t * src, size_t dest_len, size_t src_len);
 static void prot_mode_handshake_callback(void);
@@ -195,7 +194,7 @@ static const prot_cfg_t prot_cfg[] =
     .msg_res_size     = sizeof(msg_bms_data_res),
     .dest_state       = PROT_TX_FRAME,
     .rx_callback      = prot_assemble_data_frame,
-    .tx_callback      = prot_data_frame_tx_callback,
+    .tx_callback      = NULL,
 #ifdef PROT_DEBUG_PRINT
     .dump_bytes       = false,
     .debug_str        = NULL,
@@ -588,13 +587,6 @@ static void prot_assemble_trigger_frame(void)
     memcpy(serial_buffer_tx, msg_bms_trig_off_res_ok, sizeof(msg_bms_trig_off_res_ok));
     tx_length = sizeof(msg_bms_trig_off_res_ok);
   }
-}
-
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
-static void prot_data_frame_tx_callback(void)
-{
 }
 
 //- **************************************************************************
