@@ -61,7 +61,7 @@ static sw_timer task_timer = 0;
 static const dio_cfg_t dio_cfg[DIO_NUM] = 
 {
   [DIO_CHARGER_CONNECTED] = {.gpio_pin = CHARGER_CONNECTED_PIN, .deb_ticks = (50 / DIO_TASK_TICKS)},
-  [DIO_MODE_BUTTON      ] = {.gpio_pin = MODE_BUTTON,           .deb_ticks = (50 / DIO_TASK_TICKS)},
+  [DIO_MODE_BUTTON      ] = {.gpio_pin = MODE_BUTTON_PIN,       .deb_ticks = (50 / DIO_TASK_TICKS)},
   [DIO_TRIGGER_PRESSED  ] = {.gpio_pin = TRIGGER_PRESSED_PIN,   .deb_ticks = (50 / DIO_TASK_TICKS)},
 };
 

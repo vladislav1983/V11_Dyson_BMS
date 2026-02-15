@@ -10,23 +10,23 @@
 #define CONFIG_H_
 
 // Pin definitions
-#define LED_ERR_RIGHT   PIN_PA00
-#define LED_ERR_LEFT    PIN_PA19
+#define LED_ERR_RIGHT                       PIN_PA00
+#define LED_ERR_LEFT                        PIN_PA19
 
 //Battery charge/discharge indicators
 
 //- seems to go to Q3 on the charger inlet side of things, push it high to accept a charge
-#define ENABLE_CHARGE_PIN PIN_PA01 // For V15 & V11 charging confirmed
+#define ENABLE_CHARGE_PIN                   PIN_PA01 // For V15 & V11 charging confirmed
 
 //PA28 appears to be ALERT pin from the BQ7693
-#define BQ7693_ALERT_PIN PIN_PA28
+#define BQ7693_ALERT_PIN                    PIN_PA28
 
  //NB Goes high when trigger pulled, but don't have it pulled up or down..
 #define TRIGGER_PRESSED_PIN                 PIN_PA04
 //Goes high when charger plugged in.
 #define CHARGER_CONNECTED_PIN               PIN_PA06
-#define MODE_BUTTON                         PIN_PA09
-#define MODE_BUTTON_PULLUP_VOLTAGE_ENABLE   PIN_PA18
+#define MODE_BUTTON_PIN                     PIN_PA09
+#define MODE_BUTTON_PULLUP_ENABLE_PIN       PIN_PA18
 #define PRECHARGE_PIN                       PIN_PA24
 
 #define PACK_MAX_CAPACITY_MAH               4100
@@ -44,11 +44,11 @@
 // Limits disabled, as V15 & V11 have 2xRTDs, now unknown where are assigned, therefore even max temp doesnt work
 // Do not charge battery when hot and not supervised! This is for Debug only for V15, battery pack outputs 24V
 
-#define IDLE_TIME 60 * 30 // Idle time in seconds. Pack will go into SHIP/deep sleep mode if nothing happens in this duration
+#define IDLE_TIME                           60 * 30 // Idle time in seconds. Pack will go into SHIP/deep sleep mode if nothing happens in this duration
 
-#define FULL_CHARGE_PAUSE_COUNT 3 //Once a cell reaches max charge volts, pause for 30 seconds and retry, this many times.
+#define FULL_CHARGE_PAUSE_COUNT             3 //Once a cell reaches max charge volts, pause for 30 seconds and retry, this many times.
 
-//#define SERIAL_DEBUG            1 //Serial debug via the spare USART on the programming pins header
-#define PROT_DEBUG_PRINT          1
+//#define SERIAL_DEBUG                      1 //Serial debug via the spare USART on the programming pins header
+#define PROT_DEBUG_PRINT                    1
 
 #endif /* CONFIG_H_ */

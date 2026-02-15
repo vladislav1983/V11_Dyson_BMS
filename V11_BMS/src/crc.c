@@ -24,13 +24,6 @@
 /*-----------------------------------------------------------------------------
     DECLARATION OF LOCAL MACROS/#DEFINES
 -----------------------------------------------------------------------------*/
-#define CRC_INITIAL_VALUE32         (uint32_t)(0x7F77E799)
-#define CRC_INITIAL_VALUE32_REFLECT (uint32_t)(0x99E7EEFE)
-#define CRC_POLYNOMIAL_32           (uint32_t)(0x04C11DB7)
-#define CRC_POLYNOMIAL_32_REFLECT   (uint32_t)(0xEDB88320)
-#define CRC_FINAL_XOR_CRC32         (uint32_t)(0x00000000)
-
-#define CRC16_INIT_0x396F_REFLECT   (uint16_t)(0xF69C)
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
@@ -65,15 +58,15 @@ static const uint16_t crc16_C9A7_table_hi[] = { 0x0000,0xC045,0x4BAD,0x8BE8,0x97
 //! \brief 
 //!         CRC32
 //*!        Poly: 0x04C11DB7
-//*!        Init: 0x7F77E799
+//*!        Init: crc_init
 //*!        RefIn: True
 //*!        RefOut: True
 //*!        XorOut: 0x00000000
 //- **************************************************************************
-uint32_t calc_crc32(uint8_t * data_ptr, uint16_t len)
+uint32_t calc_crc32(uint32_t crc_init,  uint8_t * data_ptr, uint16_t len)
 {
   uint16_t i;
-  uint32_t wCRC32 = CRC_INITIAL_VALUE32_REFLECT;
+  uint32_t crc32 = crc_init;
 
   if(NULL == data_ptr)
   {
@@ -82,28 +75,28 @@ uint32_t calc_crc32(uint8_t * data_ptr, uint16_t len)
 
   for (i = 0; i < len; i++)
   {
-    wCRC32 = (wCRC32 >> 4) ^ c_wCRC32Table[(wCRC32 & 0x0000000F) ^ (*data_ptr & 0x0F)];
-    wCRC32 = (wCRC32 >> 4) ^ c_wCRC32Table[(wCRC32 & 0x0000000F) ^ (*data_ptr >> 4)];
+    crc32 = (crc32 >> 4) ^ c_wCRC32Table[(crc32 & 0x0000000F) ^ (*data_ptr & 0x0F)];
+    crc32 = (crc32 >> 4) ^ c_wCRC32Table[(crc32 & 0x0000000F) ^ (*data_ptr >> 4)];
     data_ptr++;
   }
 
-  return (wCRC32);
+  return (crc32);
 }
 
 //- **************************************************************************
 //! \brief 
 //!         CRC32
 //*!        Poly: 0xc9a7
-//*!        Init: 0x396f
+//*!        Init: crc_init
 //*!        RefIn: True
 //*!        RefOut: True
 //*!        XorOut: 0x00000000
 //- **************************************************************************
-uint16_t calc_crc16_C9A7(uint8_t * data_ptr, uint16_t len)
+uint16_t calc_crc16_C9A7(uint16_t crc_init, uint8_t * data_ptr, uint16_t len)
 {
   uint16_t tbl_tdx;
   uint16_t i;
-  uint16_t crc_u16 = CRC16_INIT_0x396F_REFLECT;
+  uint16_t crc_u16 = crc_init;
 
   if(NULL == data_ptr)
   {
@@ -126,6 +119,7 @@ uint16_t calc_crc16_C9A7(uint8_t * data_ptr, uint16_t len)
 //- **************************************************************************
 //! \brief 
 //- **************************************************************************
+
 /*-----------------------------------------------------------------------------
     END OF MODULE
 -----------------------------------------------------------------------------*/

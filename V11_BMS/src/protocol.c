@@ -38,7 +38,6 @@
 
 #define MSG_DELIM_CHAR                      0x12
 #define MSG_DELIM_SIZE                      1
-#define CRC_SIZE                            4
 #define TX_WAIT_TIME                        (10 / SW_TIMER_TICK_MS)
 
 #define WORD_0xDEDB_0x12_STUFF              (0xDEDB)  // 0x12 is replaced with 0xDB 0xDE to avoid framing error
@@ -335,7 +334,7 @@ void prot_mainloop(void)
       }
       // turn on motor voltage
       port_pin_set_output_level(PRECHARGE_PIN, true);
-      port_pin_set_output_level(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, true);
+      port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, true);
       // reset protocol state machine, wait for handshake
       serial_buffer_level = 0;
       sleep_flag = false;
@@ -508,7 +507,7 @@ static prot_states prot_analyze_frame(prot_states current_state)
   if(rx_state == PROT_RX_FRAME_RECEIVED)
   { 
     // extract frame size
-    msg_size = serial_buffer_rx[1] + (CRC_SIZE + MSG_DELIM_SIZE);
+    msg_size = serial_buffer_rx[1] + (sizeof(uint32_t) + MSG_DELIM_SIZE);
     // check serial buffer is matching of frame size
     if((uint16_t)serial_buffer_level == msg_size)
     {
@@ -602,7 +601,7 @@ static void prot_assemble_data_frame(void)
   uint32_t crc;
 
   // verify data frame crc
-  uint16_t crc16_calculated = calc_crc16_C9A7(&serial_buffer_rx[1], serial_buffer_level - sizeof(uint16_t) - 2);
+  uint16_t crc16_calculated = calc_crc16_C9A7(CRC16_INIT_MSG_53, &serial_buffer_rx[1], serial_buffer_level - (sizeof(uint16_t) + MSG_DELIM_SIZE + MSG_DELIM_SIZE));
   uint16_t crc16_from_frame = (uint16_t)serial_buffer_rx[(serial_buffer_level - 1) - 2] | ((uint16_t)serial_buffer_rx[(serial_buffer_level - 1) - 1] << 8);
 
   if(crc16_calculated == crc16_from_frame)
@@ -630,12 +629,12 @@ static void prot_assemble_data_frame(void)
     serial_buffer_tmp[BMS_MSG_SOC2_HI_IDX] = (uint8_t)((soc_percent_x100 >> 8) & 0x00FF);
   
     // calculate crc
-    crc = calc_crc32(serial_buffer_tmp, (sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)));
+    crc = calc_crc32(CRC32_INIT_MSG_C1, &serial_buffer_tmp[1], (sizeof(msg_bms_data_res) - (sizeof(uint32_t) + MSG_DELIM_SIZE + MSG_DELIM_SIZE)));
     // fill crc into the message
-    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 0] = (uint8_t)((crc >> 0)  & 0x000000FFul);  // lsb first
-    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 1] = (uint8_t)((crc >> 8)  & 0x000000FFul);
-    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 2] = (uint8_t)((crc >> 16) & 0x000000FFul);
-    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (CRC_SIZE + MSG_DELIM_SIZE)) + 3] = (uint8_t)((crc >> 24) & 0x000000FFul);
+    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (sizeof(uint32_t) + MSG_DELIM_SIZE)) + 0] = (uint8_t)((crc >> 0)  & 0x000000FFul);  // lsb first
+    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (sizeof(uint32_t) + MSG_DELIM_SIZE)) + 1] = (uint8_t)((crc >> 8)  & 0x000000FFul);
+    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (sizeof(uint32_t) + MSG_DELIM_SIZE)) + 2] = (uint8_t)((crc >> 16) & 0x000000FFul);
+    serial_buffer_tmp[(sizeof(msg_bms_data_res) - (sizeof(uint32_t) + MSG_DELIM_SIZE)) + 3] = (uint8_t)((crc >> 24) & 0x000000FFul);
 
     tx_length = prot_stuff_frame(serial_buffer_tx, serial_buffer_tmp, sizeof(serial_buffer_tx), sizeof(msg_bms_data_res));
   }
@@ -703,7 +702,7 @@ static void prot_mode_sleep_callback(void)
   vacuum_connected = false;
   // turn off motor supply
   port_pin_set_output_level(PRECHARGE_PIN, false);
-  port_pin_set_output_level(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, false);
+  port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
   delay_ms(300);
   prot_state = PROT_SLEEP;
   // store charger connected state 

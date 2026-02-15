@@ -387,8 +387,8 @@ static void pins_init(void)
   port_pin_set_output_level(PIN_PA03, true);
 
   // mode pin pullup voltage 
-  port_pin_set_config(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, &io_pin_config);
-  port_pin_set_output_level(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, true);
+  port_pin_set_config(MODE_BUTTON_PULLUP_ENABLE_PIN, &io_pin_config);
+  port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, true);
 
   // precharge 
   port_pin_set_config(PRECHARGE_PIN, &io_pin_config);
@@ -399,7 +399,7 @@ static void pins_init(void)
   port_pin_set_output_level(PIN_PA25, true);
 
   // mode button
-  port_pin_set_config(MODE_BUTTON, &sense_pin_config);
+  port_pin_set_config(MODE_BUTTON_PIN, &sense_pin_config);
 }
 
 //- **************************************************************************
@@ -408,7 +408,7 @@ static void pins_init(void)
 static void pins_deinit(void)
 {
   port_pin_set_output_level(PIN_PA03, false);
-  port_pin_set_output_level(MODE_BUTTON_PULLUP_VOLTAGE_ENABLE, false);
+  port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
   port_pin_set_output_level(PRECHARGE_PIN, false);
   port_pin_set_output_level(PIN_PA25, false);
 }
