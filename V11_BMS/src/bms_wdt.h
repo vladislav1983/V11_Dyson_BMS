@@ -32,6 +32,7 @@
   DECLARATION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 extern void bms_wdt_init(void);
+extern void bms_wdt_deinit(void);
 extern void bms_wdt_mainloop(void);
 
 /*-----------------------------------------------------------------------------

@@ -54,6 +54,7 @@ static void bms_wdt_early_warning_callback(void);
 void bms_wdt_init(void)
 {
 	struct wdt_conf config_wdt;
+
 	wdt_get_config_defaults(&config_wdt);
   config_wdt.clock_source         = GCLK_GENERATOR_3;
 	config_wdt.timeout_period       = WDT_PERIOD_16384CLK;
@@ -64,6 +65,18 @@ void bms_wdt_init(void)
   wdt_enable_callback(WDT_CALLBACK_EARLY_WARNING);
 
   sw_timer_start(&wdt_timer);
+}
+
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
+void bms_wdt_deinit(void)
+{
+  struct wdt_conf config_wdt;
+
+  wdt_get_config_defaults(&config_wdt);
+  config_wdt.enable = false;
+  wdt_set_config(&config_wdt);
 }
 
 //- **************************************************************************

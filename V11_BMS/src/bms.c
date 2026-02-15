@@ -736,6 +736,7 @@ static void bms_handle_trigger_pulled(void)
 //- **************************************************************************
 static void bms_handle_sleep(void)
 {
+  bms_wdt_deinit();
   serial_debug_send_message("BMS_SLEEP\r\n");
   port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
   bq7693_disable_charge();
@@ -883,6 +884,7 @@ static void bms_handle_charger_connected_not_charging(void)
     {
       bms_enter_standby();
       serial_debug_send_message("BMS_STANDBY\r\n");
+
       // goto sleep
       system_set_sleepmode(SYSTEM_SLEEPMODE_STANDBY);
       system_sleep(); // WFI
@@ -1074,6 +1076,8 @@ static void bms_enter_standby(void)
 {
   struct system_gclk_chan_config gclk_chan_conf;
 
+  bms_wdt_deinit();
+
   /* 1) Stop EIC while changing its clock */
   _extint_disable();
   /* 2) Disable the generic clock channel feeding EIC */
@@ -1121,6 +1125,8 @@ static void bms_leave_standby(void)
   extint_chan_disable_callback(6, EXTINT_CALLBACK_TYPE_DETECT);  // CHARGER_CONNECTED_PIN  EXTINT 6 - PA06
   // enable alert callback
   extint_chan_enable_callback(8, EXTINT_CALLBACK_TYPE_DETECT);
+
+  bms_wdt_init();
 }
 
 /*-----------------------------------------------------------------------------
