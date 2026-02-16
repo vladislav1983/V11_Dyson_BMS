@@ -63,7 +63,6 @@ static int32_t current_filt_sum_mA = 0;
 static int32_t current_filt_mA = 0;
 
 static uint16_t charge_pause_counter = 0;
-static uint8_t  charging_leds_duty = 0;
 static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
 static bool process_bms_interrupt = false;
@@ -395,8 +394,8 @@ static void pins_init(void)
   port_pin_set_output_level(PRECHARGE_PIN, false);
 
   // unknown functionality pin
-  port_pin_set_config(PIN_PA25, &io_pin_config);
-  port_pin_set_output_level(PIN_PA25, true);
+  //port_pin_set_config(PIN_PA25, &io_pin_config);
+  //port_pin_set_output_level(PIN_PA25, true);
 
   // mode button
   port_pin_set_config(MODE_BUTTON_PIN, &sense_pin_config);
@@ -410,7 +409,6 @@ static void pins_deinit(void)
   port_pin_set_output_level(PIN_PA03, false);
   port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
   port_pin_set_output_level(PRECHARGE_PIN, false);
-  port_pin_set_output_level(PIN_PA25, false);
 }
 
 //- **************************************************************************
@@ -738,7 +736,6 @@ static void bms_handle_sleep(void)
 {
   bms_wdt_deinit();
   serial_debug_send_message("BMS_SLEEP\r\n");
-  port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
   bq7693_disable_charge();
   bq7693_disable_discharge();
 
@@ -884,6 +881,7 @@ static void bms_handle_charger_connected_not_charging(void)
     {
       bms_enter_standby();
       serial_debug_send_message("BMS_STANDBY\r\n");
+      leds_blink_leds_num(LEDS_NUM, 4, 100);
 
       // goto sleep
       system_set_sleepmode(SYSTEM_SLEEPMODE_STANDBY);
@@ -893,6 +891,7 @@ static void bms_handle_charger_connected_not_charging(void)
 
       // reset protocol state machine, wait for handshake 
       prot_reset();
+      leds_blink_leds_num(LEDS_NUM, 2, 100);
     }
     else if (!dio_read(DIO_CHARGER_CONNECTED))
     {
@@ -908,6 +907,7 @@ static void bms_handle_charger_connected_not_charging(void)
 //- **************************************************************************
 static void bms_handle_charging(void)
 {
+  uint8_t charging_leds_duty = 0;
 #ifdef SERIAL_DEBUG
   uint8_t debug_print_cnt = 0;
 #endif
@@ -967,6 +967,8 @@ static void bms_handle_charging(void)
     
     if (bms_is_pack_full()) 
     {
+      charging_leds_duty = 0;
+      leds_off();
 #ifdef SERIAL_DEBUG
       BMS_PRINT("BMS:CHARGING Paused - full, attempt %d of %d\r\n", charge_pause_counter, FULL_CHARGE_PAUSE_COUNT);
       serial_debug_send_cell_voltages();

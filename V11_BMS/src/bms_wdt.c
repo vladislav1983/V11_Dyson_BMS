@@ -75,6 +75,7 @@ void bms_wdt_deinit(void)
 {
   struct wdt_conf config_wdt;
 
+  wdt_disable_callback(WDT_CALLBACK_EARLY_WARNING);
   wdt_get_config_defaults(&config_wdt);
   config_wdt.enable = false;
   wdt_set_config(&config_wdt);

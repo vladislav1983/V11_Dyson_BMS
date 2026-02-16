@@ -139,7 +139,7 @@ void leds_on(void)
 //- **************************************************************************
 //! \brief
 //- **************************************************************************
-void leds_blink_leds(int ms)
+void leds_blink_leds(uint32_t ms)
 {
   const uint32_t cc_100_ppt = (CAPTURE_VALUE);
   const uint32_t cc_0_ppt = 0;
@@ -157,6 +157,46 @@ void leds_blink_leds(int ms)
   }
 
   sw_timer_delay_ms(ms / 2);
+}
+
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
+void leds_blink_led(leds_t led, uint32_t ms)
+{
+  const uint32_t cc_100_ppt = (CAPTURE_VALUE);
+  const uint32_t cc_0_ppt = 0;
+
+  if(led < LEDS_NUM)
+  {
+    tc_set_compare_value(&tc_instances[led], leds_cfg[led].chnl, cc_100_ppt);
+    sw_timer_delay_ms(ms / 2);
+    tc_set_compare_value(&tc_instances[led], leds_cfg[led].chnl, cc_0_ppt);
+    sw_timer_delay_ms(ms / 2);
+  }
+}
+
+//- **************************************************************************
+//! \brief
+//- **************************************************************************
+void leds_blink_leds_num(leds_t led, uint32_t num, uint32_t ms)
+{
+  for(uint32_t num_l = 0; num_l < num; num_l++)
+  { 
+    if(led <= LEDS_NUM)
+    {
+      switch (led)
+      {
+        case LEDS_LED_ERR_LEFT:
+        case LEDS_LED_ERR_RIGHT:
+          leds_blink_led(led, ms);
+        break;
+        default:
+          leds_blink_leds(ms);
+        break;
+      }
+    }
+  }
 }
 
 //- **************************************************************************
