@@ -217,7 +217,7 @@ static const prot_cfg_t prot_cfg[] =
   {
     .msg_req_ptr      = msg_vac_trig_req_ok,
     .msg_res_ptr      = serial_buffer_tx,
-    .msg_req_cmp_size = 12,
+    .msg_req_cmp_size = 11,
     .msg_req_size     = sizeof(msg_vac_trig_req_ok),
     .msg_res_size     = 0,
     .dest_state       = PROT_TX_FRAME,
