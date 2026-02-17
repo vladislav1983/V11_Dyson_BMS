@@ -44,14 +44,14 @@ int eeprom_read(void)
  {
   uint8_t buffer[EEPROM_PAGE_SIZE];
   eeprom_emulator_read_page(0, buffer);
-  memcpy(&eeprom_data, buffer, sizeof(eeprom_data));
+  memcpy((void*)&eeprom_data, buffer, sizeof(eeprom_data));
   return 0;
 }
 
 int eeprom_write(void) 
 {
   uint8_t buffer[EEPROM_PAGE_SIZE];
-  memcpy(buffer, &eeprom_data, sizeof(eeprom_data));
+  memcpy(buffer, (const void*)&eeprom_data, sizeof(eeprom_data));
   eeprom_emulator_write_page(0, buffer);  
   eeprom_emulator_commit_page_buffer();
   return 0;
