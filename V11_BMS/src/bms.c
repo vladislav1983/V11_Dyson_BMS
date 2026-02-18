@@ -234,12 +234,11 @@ void bms_interrupt_process(void)
 uint16_t bms_get_soc_x100(void)
 {
   uint16_t soc = 100;
+  int32_t current_charge_level = eeprom_data.current_charge_level;
+  int16_t total_pack_capacity  = eeprom_data.total_pack_capacity  >> 10;
 
-  if(eeprom_data.total_pack_capacity > 0 && eeprom_data.current_charge_level > 0)
-  {
-    uint32_t current_charge_level = eeprom_data.current_charge_level;
-    uint16_t total_pack_capacity  = eeprom_data.total_pack_capacity  >> 10;
-    
+  if(total_pack_capacity > 0 && current_charge_level > 0)
+  {   
     soc = (current_charge_level * (uint16_t)ROUND((100.0f * 100.0f) / 1024.0f)) / total_pack_capacity;
     soc = (soc > 10000) ? 10000 : ((soc == 0) ? 100 : soc);
   }
@@ -255,20 +254,21 @@ uint16_t bms_get_soc_x100(void)
 //- **************************************************************************
 uint32_t bms_get_runtime_seconds(void)
 {
-  uint32_t current_filt_mA_abs = abs(current_filt_mA);
-  int32_t  current_charge_level;
-  int32_t  runtime = 0;
-  uint16_t current;
+  int32_t current_filt_mA_abs = abs(current_filt_mA);
+  int32_t current_charge_level;
+  int32_t runtime = 0;
 
   if(    bms_state == BMS_DISCHARGING // fill the runtime only when vacuum is working
       && current_filt_mA_abs > 1000)  // and current is > 1A, to prevent too big numbers
   {
-    current_charge_level = eeprom_data.current_charge_level > (PACK_MAX_CAPACITY_MAH * 1000) ? (PACK_MAX_CAPACITY_MAH * 1000) : eeprom_data.current_charge_level; // limit pack capacity
-    current              = (current_filt_mA == 0) ? 1 : abs(current_filt_mA);  // check current is not zero
+    // clamp to [0, PACK_MAX_CAPACITY_MAH * 1000]
+    current_charge_level = eeprom_data.current_charge_level < 0 ? 0
+                         : eeprom_data.current_charge_level > (PACK_MAX_CAPACITY_MAH * 1000) ? (PACK_MAX_CAPACITY_MAH * 1000)
+                         : eeprom_data.current_charge_level;
 
-    runtime = ((current_charge_level / current) * (uint16_t)((3600.0f / 1000.0f) * 1024.0f)) >> 10;  // compute and scale down
-   
-    // always limit runtime to 1 minute 
+    runtime = ((current_charge_level / current_filt_mA_abs) * (uint16_t)((3600.0f / 1000.0f) * 1024.0f)) >> 10;
+
+    // always limit runtime to 1 minute
     runtime = runtime < 60 ? 60 : runtime;
   }
 
