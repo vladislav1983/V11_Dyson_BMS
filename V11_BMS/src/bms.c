@@ -37,8 +37,9 @@ volatile bool     force_sleep = false;
 #ifdef SERIAL_DEBUG
 #define BMS_PRINT(...) \
 { \
-  snprintf(debug_msg_buffer, DEBUG_MSG_BUFFER_SIZE, __VA_ARGS__); \
-  serial_debug_send_message(debug_msg_buffer);  \
+  char _dbg_tmp[DEBUG_MSG_BUFFER_SIZE]; \
+  snprintf(_dbg_tmp, sizeof(_dbg_tmp), __VA_ARGS__); \
+  serial_debug_send_message(_dbg_tmp);  \
 }
 #else
 #define BMS_PRINT(...)

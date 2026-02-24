@@ -34,7 +34,6 @@
 -----------------------------------------------------------------------------*/
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
 static struct usart_module debug_usart;
-static char debug_buffer[DEBUG_MSG_BUFFER_SIZE];
 static char debug_queue[DEBUG_QUEUE_SIZE];
 static volatile uint16_t queue_head = 0;  // write index
 static volatile uint16_t queue_tail = 0;  // read index
@@ -48,9 +47,6 @@ static volatile uint16_t queue_tail = 0;  // read index
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL VARIABLES
 -----------------------------------------------------------------------------*/
-#if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
-char *debug_msg_buffer = debug_buffer;
-#endif
 extern volatile struct eeprom_data eeprom_data;
 
 /*-----------------------------------------------------------------------------
@@ -130,20 +126,19 @@ void serial_debug_process(void)
 void serial_debug_send_cell_voltages(void)
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
+  char tmp[30];
   uint16_t *cell_voltages = bq7693_get_cell_voltages();
   
   serial_debug_send_message("V:");
   
   for (int i=0; i<7; ++i)
   {
-    snprintf(debug_msg_buffer, DEBUG_MSG_BUFFER_SIZE, " %d ", cell_voltages[i]);
-    serial_debug_send_message(debug_msg_buffer);
+    snprintf(tmp, sizeof(tmp), " %d ", cell_voltages[i]);
+    serial_debug_send_message(tmp);
   }
 
-  serial_debug_send_message(debug_msg_buffer);
-  snprintf(debug_msg_buffer, DEBUG_MSG_BUFFER_SIZE, "P: %d\r\n", bq7693_get_pack_voltage());
-
-  serial_debug_send_message(debug_msg_buffer);
+  snprintf(tmp, sizeof(tmp), "P: %d\r\n", bq7693_get_pack_voltage());
+  serial_debug_send_message(tmp);
 #endif
 }
 
@@ -153,8 +148,9 @@ void serial_debug_send_cell_voltages(void)
 void serial_debug_send_pack_capacity(void)
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
-  snprintf(debug_msg_buffer, DEBUG_MSG_BUFFER_SIZE, "C: %ld mAh\r\n", eeprom_data.current_charge_level/1000);
-  serial_debug_send_message(debug_msg_buffer);
+  char tmp[30];
+  snprintf(tmp, sizeof(tmp), "C: %ld mAh\r\n", eeprom_data.current_charge_level/1000);
+  serial_debug_send_message(tmp);
 #endif
 }
 
