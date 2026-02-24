@@ -109,6 +109,7 @@ static void    bms_handle_charging(void);
 static void    bms_handle_charger_unplugged(void);
 static void    bms_enter_standby(void);
 static void    bms_leave_standby(void);
+static void    bms_health_update_capacity(int32_t measured_capacity_uah);
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
@@ -205,6 +206,16 @@ void bms_interrupt_process(void)
         cc_uah /= 32768;
         eeprom_data.current_charge_level += cc_uah;
         
+        // Accumulate into charge/discharge counters for health calibration
+        if (cc_uah > 0)
+        {
+          eeprom_data.cc_charge_counter_uah += cc_uah;
+        }
+        else if (cc_uah < 0)
+        {
+          eeprom_data.cc_discharge_counter_uah += (-cc_uah); // store as positive value
+        }
+
         //We thought the pack was full, but it's still charging, so we need to update its' size.
         if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
         {
@@ -273,6 +284,20 @@ uint32_t bms_get_runtime_seconds(void)
   }
 
   return (uint32_t)runtime;
+}
+
+//- **************************************************************************
+//! \brief  Return State of Health as percentage (0-100)
+//!         SoH = learned_capacity / total_pack_capacity at first cycle * 100
+//- **************************************************************************
+uint8_t bms_get_soh(void)
+{
+  int32_t ref = eeprom_data.total_pack_capacity;
+  if (ref <= 0) return 100;
+  int32_t soh = (eeprom_data.learned_pack_capacity * 100) / ref;
+  if (soh > 100) soh = 100;
+  if (soh < 0)   soh = 0;
+  return (uint8_t)soh;
 }
 
 //- **************************************************************************
@@ -769,6 +794,8 @@ static void bms_handle_discharging(void)
   {
 		//Sanity check, hopefully already checked prior to here!
 		bq7693_enable_discharge();
+    // Reset discharge counter at start of discharge cycle
+    eeprom_data.cc_discharge_counter_uah = 0;
     sw_timer_delay_ms(300);
     prot_set_trigger(true);
 	}
@@ -826,11 +853,11 @@ static void bms_handle_fault(void)
 			//If the problem is just a flat pack, blink
 			leds_blink_leds(50);
 
-			//We also need to update the pack capacity as it's flat at this point.
-			if (eeprom_data.current_charge_level > 0 && eeprom_data.total_pack_capacity > eeprom_data.current_charge_level) 
-      {
-				eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
-				eeprom_data.current_charge_level = 0;				
+			//Pack is fully discharged - coulomb counter health calibration point
+			{
+				bms_health_update_capacity(eeprom_data.cc_discharge_counter_uah);
+				eeprom_data.current_charge_level = 0;
+				eeprom_data.cc_discharge_counter_uah = 0;
 			}
 		}
 		else 
@@ -914,6 +941,11 @@ static void bms_handle_charging(void)
   uint8_t debug_print_cnt = 0;
 #endif
 
+  // First-cycle reset: 20 trigger pushes while charging resets learned capacity
+  uint8_t trigger_push_count = 0;
+  bool    trigger_was_pressed = false;
+  sw_timer trigger_timeout_timer = 0;
+
   //Sanity check...
   if (!bms_is_safe_to_charge()) 
   {
@@ -926,6 +958,8 @@ static void bms_handle_charging(void)
   //Enable the charge FET in the BQ7693.
   bq7693_enable_charge();
   
+  // Reset charge counter at start of charge cycle
+  eeprom_data.cc_charge_counter_uah = 0;
   charge_pause_counter = 0;
   
   while (1) 
@@ -943,6 +977,33 @@ static void bms_handle_charging(void)
      leds_set_led_duty(LEDS_LED_ERR_RIGHT, duty_loc);
      leds_set_led_duty(LEDS_LED_ERR_LEFT,  duty_loc);
      charging_leds_duty = (charging_leds_duty + ((charging_leds_duty > 20) ? 10 : 1)) % ((DUTY_MAX * 2) + 1);
+
+    // Detect trigger pushes for first_cycle_done reset (20 pushes = reset)
+    {
+      bool trigger_now = dio_read(DIO_TRIGGER_PRESSED);
+      if (trigger_now && !trigger_was_pressed)
+      {
+        // Rising edge detected
+        trigger_push_count++;
+        sw_timer_start(&trigger_timeout_timer);
+
+        if (trigger_push_count >= 20)
+        {
+          eeprom_data.first_cycle_done = 0;
+          trigger_push_count = 0;
+          leds_off();
+          leds_blink_leds_num(LEDS_LED_ERR_LEFT, 10, 100);
+          BMS_PRINT("BMS:HEALTH first_cycle_done reset by trigger\\r\\n");
+        }
+      }
+      trigger_was_pressed = trigger_now;
+
+      // If trigger not pressed for >2 seconds, reset counter
+      if (trigger_push_count > 0 && sw_timer_is_elapsed(&trigger_timeout_timer, 2000))
+      {
+        trigger_push_count = 0;
+      }
+    }
 
     if (!bms_is_safe_to_charge()) 
     {
@@ -1020,8 +1081,10 @@ static void bms_handle_charging(void)
 
       bms_state = BMS_CHARGER_CONNECTED_NOT_CHARGING;
 
-      //Set charge level to equal capacity.
-      eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
+      //Pack is fully charged - coulomb counter health calibration point
+      bms_health_update_capacity(eeprom_data.cc_charge_counter_uah);
+      eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
+      eeprom_data.cc_charge_counter_uah = 0;
 
       BMS_PRINT("BMS:CHARGING Stopped\r\n");
 #ifdef SERIAL_DEBUG
@@ -1131,6 +1194,60 @@ static void bms_leave_standby(void)
   extint_chan_enable_callback(8, EXTINT_CALLBACK_TYPE_DETECT);
 
   bms_wdt_init();
+}
+
+//- **************************************************************************
+//! \brief  Update learned_pack_capacity using coulomb-counter measured capacity.
+//!         First cycle: directly assign measured value as learned capacity.
+//!         Subsequent cycles: IIR filter to smooth across cycles.
+//!         Updates total_pack_capacity from the learned value.
+//- **************************************************************************
+static void bms_health_update_capacity(int32_t measured_capacity_uah)
+{
+#define HEALTH_FILTER_SHIFT                 2   // IIR filter: new = ((2^N-1)*old + measured) >> N
+
+  // Reject clearly invalid measurements
+  if (measured_capacity_uah <= 0) return;
+
+  // Sanity check: reject measurements below 25% or above 200% of current learned capacity
+  if (eeprom_data.first_cycle_done)
+  {
+    int32_t learned_capacity = eeprom_data.learned_pack_capacity;
+    if (measured_capacity_uah < (learned_capacity / 4) || measured_capacity_uah > (learned_capacity * 2))
+    {
+      BMS_PRINT("BMS:HEALTH rejected meas:%ld mAh\r\n", (measured_capacity_uah / 1000));
+      return;
+    }
+  }
+
+  if (!eeprom_data.first_cycle_done)
+  {
+    // First completed cycle - we don't know the real capacity,
+    // directly assign the measured value as the learned capacity
+    eeprom_data.learned_pack_capacity = measured_capacity_uah;
+    eeprom_data.first_cycle_done = 1;
+    BMS_PRINT("BMS:HEALTH first cycle, learned:%ld mAh\r\n", (measured_capacity_uah / 1000));
+  }
+  else
+  {
+    // IIR low-pass filter: new = ((K-1)*old + measured) / K  where K = 2^HEALTH_FILTER_SHIFT
+    eeprom_data.learned_pack_capacity = (eeprom_data.learned_pack_capacity * ((1 << HEALTH_FILTER_SHIFT) - 1) + measured_capacity_uah) >> HEALTH_FILTER_SHIFT;
+  }
+
+  // Update working capacity from learned value
+  eeprom_data.total_pack_capacity = eeprom_data.learned_pack_capacity;
+
+  // Track cycle count
+  if (eeprom_data.cycle_count < UINT16_MAX)
+  {
+    eeprom_data.cycle_count++;
+  }
+
+  BMS_PRINT("BMS:HEALTH meas:%ld mAh, learned:%ld mAh, SoH:%u%%, cycles:%u\r\n",
+                                                                                (measured_capacity_uah / 1000),
+                                                                                (eeprom_data.learned_pack_capacity / 1000),
+                                                                                bms_get_soh(),
+                                                                                eeprom_data.cycle_count);
 }
 
 /*-----------------------------------------------------------------------------

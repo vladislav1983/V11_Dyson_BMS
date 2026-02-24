@@ -31,8 +31,13 @@ int eeprom_init(void)
     eeprom_emulator_erase_memory();
     error_code = eeprom_emulator_init();
     //Write an initial guestimate of what a pack capacity might look like, we'll fine tune this by charging and discharging.
-    eeprom_data.total_pack_capacity  = (PACK_MAX_CAPACITY_MAH       * 1000ul);         //in micro-amp-hours
-    eeprom_data.current_charge_level = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul); 
+    eeprom_data.total_pack_capacity      = (PACK_MAX_CAPACITY_MAH       * 1000ul);  //in micro-amp-hours
+    eeprom_data.current_charge_level     = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul);
+    eeprom_data.learned_pack_capacity    = (PACK_MAX_CAPACITY_MAH       * 1000ul);  //initial guess
+    eeprom_data.cc_charge_counter_uah    = 0;
+    eeprom_data.cc_discharge_counter_uah = 0;
+    eeprom_data.cycle_count              = 0;
+    eeprom_data.first_cycle_done         = 0;
     eeprom_write();
     eeprom_emulator_commit_page_buffer();
   }
