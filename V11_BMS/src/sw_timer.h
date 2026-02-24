@@ -16,6 +16,7 @@
 #include "bms.h"
 #include "dio.h"
 #include "bms_wdt.h"
+#include "serial_debug.h"
 
 /*-----------------------------------------------------------------------------
   DEFINITION OF GLOBAL TYPES
@@ -32,6 +33,7 @@ typedef uint32_t sw_timer;
   bms_interrupt_process(); \
   dio_mainloop(); \
   bms_wdt_mainloop();\
+  serial_debug_process(); \
 }
 
 /*-----------------------------------------------------------------------------

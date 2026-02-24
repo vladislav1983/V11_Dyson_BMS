@@ -47,7 +47,7 @@
 #ifdef PROT_DEBUG_PRINT
   #define PROT_PRINT(...) \
   { \
-    sprintf(debug_msg_buffer, __VA_ARGS__); \
+    snprintf(debug_msg_buffer, DEBUG_MSG_BUFFER_SIZE, __VA_ARGS__); \
     serial_debug_send_message(debug_msg_buffer);  \
   }
 #else
