@@ -64,6 +64,7 @@ static int32_t current_filt_mA = 0;
 
 static uint16_t charge_pause_counter = 0;
 static sw_timer bms_timer = 0;
+static sw_timer discharge_start_timer = 0;
 static int16_t  pack_temperature = 0;
 static bool process_bms_interrupt = false;
 
@@ -261,15 +262,27 @@ uint32_t bms_get_runtime_seconds(void)
   if(    bms_state == BMS_DISCHARGING // fill the runtime only when vacuum is working
       && current_filt_mA_abs > 1000)  // and current is > 1A, to prevent too big numbers
   {
-    // clamp to [0, PACK_MAX_CAPACITY_MAH * 1000]
-    current_charge_level = eeprom_data.current_charge_level < 0 ? 0
-                         : eeprom_data.current_charge_level > (PACK_MAX_CAPACITY_MAH * 1000) ? (PACK_MAX_CAPACITY_MAH * 1000)
-                         : eeprom_data.current_charge_level;
-
+    if (!sw_timer_is_elapsed(&discharge_start_timer, 2000))
+    {
+      // first 2 seconds: use total pack capacity as MM:SS runtime, want to see the total pack capacity on the lcd
+      uint32_t cap_mah  = eeprom_data.total_pack_capacity / 1000;
+      uint32_t cap_min  = (cap_mah * (uint16_t)((60.0f / 100.0f) * 32768.0f)) >> 15;
+      uint32_t cap_secs = cap_mah % 100;
+      runtime = cap_min + cap_secs;
+    }
+    else
+    {
+      // clamp to [0, PACK_MAX_CAPACITY_MAH * 1000]
+      current_charge_level = eeprom_data.current_charge_level < 0 ? 0
+                           : eeprom_data.current_charge_level > (PACK_MAX_CAPACITY_MAH * 1000) ? (PACK_MAX_CAPACITY_MAH * 1000)
+                           : eeprom_data.current_charge_level;
+                           
     runtime = ((current_charge_level / current_filt_mA_abs) * (uint16_t)((3600.0f / 1000.0f) * 1024.0f)) >> 10;
 
     // always limit runtime to 1 minute
     runtime = runtime < 60 ? 60 : runtime;
+    }
+
   }
 
   return (uint32_t)runtime;
@@ -708,7 +721,7 @@ static void bms_handle_idle(void)
     sw_timer_delay_ms(50);
 
   } while (false == sw_timer_is_elapsed(&bms_timer, sleep_time));
-  	
+    
   //Reached the end of our wait loop, with nobody pulling the trigger, or plugging in charger.
   //Transit to sleep state
   bms_state = BMS_SLEEP;
@@ -719,16 +732,16 @@ static void bms_handle_idle(void)
 //- **************************************************************************
 static void bms_handle_trigger_pulled(void)
 {
-	//Check if it's safe to discharge or not.
-	if (bms_is_safe_to_discharge()) 
+  //Check if it's safe to discharge or not.
+  if (bms_is_safe_to_discharge()) 
   {
-		//All go - unleash the power!
-		bms_state = BMS_DISCHARGING;
-	}
-	else 
+    //All go - unleash the power!
+    bms_state = BMS_DISCHARGING;
+  }
+  else 
   {
-		bms_state = BMS_FAULT;
-	}
+    bms_state = BMS_FAULT;
+  }
 }
 
 //- **************************************************************************
@@ -765,13 +778,15 @@ static void bms_handle_discharging(void)
   uint8_t debug_print_cnt = 0;
 #endif
 
-	if (bms_is_safe_to_discharge()) 
+  sw_timer_start(&discharge_start_timer);
+
+  if (bms_is_safe_to_discharge()) 
   {
-		//Sanity check, hopefully already checked prior to here!
-		bq7693_enable_discharge();
+    //Sanity check, hopefully already checked prior to here!
+    bq7693_enable_discharge();
     sw_timer_delay_ms(300);
     prot_set_trigger(true);
-	}
+  }
 
   while (1)
   {
@@ -813,41 +828,41 @@ static void bms_handle_discharging(void)
 static void bms_handle_fault(void)
 {
   //Turn all the LEDs off.
-	leds_off();
-	prot_set_trigger(false);
+  leds_off();
+  prot_set_trigger(false);
   bq7693_disable_discharge();
   port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
 
-	//Show the error status and continue to show it, until trigger released and charger unplugged.
-	do 
+  //Show the error status and continue to show it, until trigger released and charger unplugged.
+  do 
   {
-		if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE ) 
+    if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE ) 
     {
-			//If the problem is just a flat pack, blink
-			leds_blink_leds(50);
+      //If the problem is just a flat pack, blink
+      leds_blink_leds(50);
 
-			//We also need to update the pack capacity as it's flat at this point.
-			if (eeprom_data.current_charge_level > 0 && eeprom_data.total_pack_capacity > eeprom_data.current_charge_level) 
+      //We also need to update the pack capacity as it's flat at this point.
+      if (eeprom_data.current_charge_level > 0 && eeprom_data.total_pack_capacity > eeprom_data.current_charge_level) 
       {
-				eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
-				eeprom_data.current_charge_level = 0;				
-			}
-		}
-		else 
+        eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
+        eeprom_data.current_charge_level = 0;        
+      }
+    }
+    else 
     {
-			//Flash the red error led the number of times indicated by the fault code.
-			for (int i=0; i < bms_error; ++i)
+      //Flash the red error led the number of times indicated by the fault code.
+      for (int i=0; i < bms_error; ++i)
       {
-				leds_blink_leds(500);
-			}
+        leds_blink_leds(500);
+      }
 
-			sw_timer_delay_ms(2000);
-		}
-	} 
-	while (dio_read(DIO_TRIGGER_PRESSED) || dio_read(DIO_CHARGER_CONNECTED));
-		
-	//Return to idle
-	bms_state = BMS_IDLE;	
+      sw_timer_delay_ms(2000);
+    }
+  } 
+  while (dio_read(DIO_TRIGGER_PRESSED) || dio_read(DIO_CHARGER_CONNECTED));
+    
+  //Return to idle
+  bms_state = BMS_IDLE;  
 }
 
 //- **************************************************************************

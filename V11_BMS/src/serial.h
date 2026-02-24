@@ -37,4 +37,4 @@ extern void serial_send(uint8_t* buff_ptr, uint8_t buff_size);
 /*-----------------------------------------------------------------------------
   END OF MODULE DEFINITION FOR MULTIPLE INCLUSION
 -----------------------------------------------------------------------------*/
-#endif	/* SERIAL_H_ */
+#endif  /* SERIAL_H_ */

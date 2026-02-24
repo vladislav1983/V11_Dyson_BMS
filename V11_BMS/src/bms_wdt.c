@@ -54,13 +54,13 @@ static void bms_wdt_early_warning_callback(void);
 //- **************************************************************************
 void bms_wdt_init(void)
 {
-	struct wdt_conf config_wdt;
+  struct wdt_conf config_wdt;
 
-	wdt_get_config_defaults(&config_wdt);
+  wdt_get_config_defaults(&config_wdt);
   config_wdt.clock_source         = GCLK_GENERATOR_3;
-	config_wdt.timeout_period       = WDT_PERIOD_16384CLK;
-	config_wdt.early_warning_period = WDT_PERIOD_16384CLK;
-	wdt_set_config(&config_wdt);
+  config_wdt.timeout_period       = WDT_PERIOD_16384CLK;
+  config_wdt.early_warning_period = WDT_PERIOD_16384CLK;
+  wdt_set_config(&config_wdt);
 
   wdt_register_callback(bms_wdt_early_warning_callback, WDT_CALLBACK_EARLY_WARNING);
   wdt_enable_callback(WDT_CALLBACK_EARLY_WARNING);
