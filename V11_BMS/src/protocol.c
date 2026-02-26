@@ -24,18 +24,16 @@
 #define PROT_DEBUG_RX_ANALYZED              1
 
 
-#define MSG_DELIM_IDX                       0
-#define MSG_ID_IDX                          1
-// message 0x12 0x38 .. indexes
-#define BMS_MSG_ROLLING_COUNTER_IDX         8
-#define BMS_MSG_TRIGGER_IDX                 15
-#define BMS_MSG_CHARGER_CONNECTED_IDX       22
-#define BMS_MSG_SOC_LO_IDX                  29
-#define BMS_MSG_SOC_HI_IDX                  30
-#define BMS_MSG_BAT_RUNTIME_LO_IDX          37
-#define BMS_MSG_BAT_RUNTIME_HI_IDX          38
-#define BMS_MSG_SOC2_LO_IDX                 47
-#define BMS_MSG_SOC2_HI_IDX                 48
+#define MSG_ID_IDX                          0 // This isnt msg index - byte 1 and 2 are low + high bytes of msg len
+#define BMS_MSG_ROLLING_COUNTER_IDX         7
+#define BMS_MSG_TRIGGER_IDX                 14
+#define BMS_MSG_CHARGER_CONNECTED_IDX       21
+#define BMS_MSG_SOC_LO_IDX                  28
+#define BMS_MSG_SOC_HI_IDX                  29
+#define BMS_MSG_BAT_RUNTIME_LO_IDX          36
+#define BMS_MSG_BAT_RUNTIME_HI_IDX          37
+#define BMS_MSG_SOC2_LO_IDX                 46
+#define BMS_MSG_SOC2_HI_IDX                 47
 
 #define MSG_DELIM_CHAR                      0x12
 #define MSG_DELIM_SIZE                      1
