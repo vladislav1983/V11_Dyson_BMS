@@ -144,7 +144,7 @@ uint16_t discarded_frames_cnt = 0;
 static prot_states prot_analyze_frame(prot_states current_state);
 static void prot_assemble_trigger_frame(void);
 static void prot_assemble_data_frame(void);
-static uint8_t prot_stuff_frame(uint8_t * dest, const uint8_t * src, size_t dest_len, size_t src_len);
+static uint8_t prot_into_wire_fmt(uint8_t * dest, const uint8_t * src, size_t dest_len, size_t src_len);
 static void prot_mode_handshake_callback(void);
 static void prot_mode_sleep_callback(void);
 
@@ -635,7 +635,7 @@ static void prot_assemble_data_frame(void)
     serial_buffer_tmp[(sizeof(msg_bms_data_res) - (sizeof(uint32_t) + MSG_DELIM_SIZE)) + 2] = (uint8_t)((crc >> 16) & 0x000000FFul);
     serial_buffer_tmp[(sizeof(msg_bms_data_res) - (sizeof(uint32_t) + MSG_DELIM_SIZE)) + 3] = (uint8_t)((crc >> 24) & 0x000000FFul);
 
-    tx_length = prot_stuff_frame(serial_buffer_tx, serial_buffer_tmp, sizeof(serial_buffer_tx), sizeof(msg_bms_data_res));
+    tx_length = prot_into_wire_fmt(serial_buffer_tx, serial_buffer_tmp, sizeof(serial_buffer_tx), sizeof(msg_bms_data_res));
   }
   else
   {
@@ -646,16 +646,21 @@ static void prot_assemble_data_frame(void)
 //- **************************************************************************
 //! \brief
 //- **************************************************************************
-static uint8_t prot_stuff_frame(uint8_t * dest, const uint8_t * src, size_t dest_len, size_t src_len)
+static uint8_t prot_into_wire_fmt(uint8_t * dest, const uint8_t * src, size_t dest_len, size_t src_len)
 {
   size_t length = 0;
   
-  if(src_len > (MSG_DELIM_SIZE + 1) && dest_len >= src_len)
-  {
-    // copy first 6 bytes including frame delimiter, which are fixed
-    memcpy(dest, src, 6);
+  // Insert delim char at start
+  dest[length++]= MSG_DELIM_CHAR;
 
-    for (size_t i = length = 6; i < (src_len - 1); i++, length++)
+  //This isn't good enough to guarantee we won't overwrite memory
+  if(dest_len >= src_len)
+  {
+    // copy first 5 bytes which are fixed
+    memcpy(dest, src, 5);
+    length +=5;
+
+    for (size_t i = length; i < src_len; i++, length++)
     {
       if((length + 2) < (uint8_t)dest_len)
       {
@@ -675,9 +680,8 @@ static uint8_t prot_stuff_frame(uint8_t * dest, const uint8_t * src, size_t dest
         }
       }
     }
-
     // copy delimiter - end of frame
-    dest[length++] = src[(src_len - 1)];
+    dest[length++] = MSG_DELIM_CHAR;
   }
 
   return length;
