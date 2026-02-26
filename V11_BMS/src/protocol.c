@@ -417,7 +417,6 @@ void prot_serial_rx_callback(uint8_t ch)
     {
       if(ch == MSG_DELIM_CHAR)
       {
-        serial_buffer_rx[serial_buffer_level++] = ch;
         rx_state = PROT_RX_CHECK_SIZE;
       }
     }
