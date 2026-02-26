@@ -23,6 +23,7 @@
 /*-----------------------------------------------------------------------------
     DECLARATION OF LOCAL MACROS/#DEFINES
 -----------------------------------------------------------------------------*/
+#define DEBUG_QUEUE_SIZE  256
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
@@ -33,7 +34,9 @@
 -----------------------------------------------------------------------------*/
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
 static struct usart_module debug_usart;
-static char debug_buffer[80];
+static char debug_queue[DEBUG_QUEUE_SIZE];
+static volatile uint16_t queue_head = 0;  // write index
+static volatile uint16_t queue_tail = 0;  // read index
 #endif
 
 /*-----------------------------------------------------------------------------
@@ -44,9 +47,6 @@ static char debug_buffer[80];
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL VARIABLES
 -----------------------------------------------------------------------------*/
-#if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
-char *debug_msg_buffer = debug_buffer;
-#endif
 extern volatile struct eeprom_data eeprom_data;
 
 /*-----------------------------------------------------------------------------
@@ -83,6 +83,8 @@ void serial_debug_init()
   //Enable
   usart_enable(&debug_usart);
 #endif
+  queue_head = 0;  // write index
+  queue_tail = 0;  // read index
 }
 
 //- **************************************************************************
@@ -91,11 +93,29 @@ void serial_debug_init()
 void serial_debug_send_message(const char *msg)
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
-  size_t msg_len = strlen(msg);
-
-  if(msg_len > 0)
+  while (*msg)
   {
-    usart_write_buffer_wait(&debug_usart, (const uint8_t*)msg, (uint16_t)msg_len);
+    uint16_t next_head = (queue_head + 1) % DEBUG_QUEUE_SIZE;
+    if (next_head == queue_tail)
+    {
+      break;  // queue full, drop remaining characters
+    }
+    debug_queue[queue_head] = *msg++;
+    queue_head = next_head;
+  }
+#endif
+}
+
+//- **************************************************************************
+//! \brief Send one character from the queue. Call repeatedly from main loop.
+//- **************************************************************************
+void serial_debug_process(void)
+{
+#if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
+  if (queue_tail != queue_head)
+  {
+    usart_write_buffer_wait(&debug_usart, (const uint8_t*)&debug_queue[queue_tail], 1);
+    queue_tail = (queue_tail + 1) % DEBUG_QUEUE_SIZE;
   }
 #endif
 }
@@ -106,20 +126,19 @@ void serial_debug_send_message(const char *msg)
 void serial_debug_send_cell_voltages(void)
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
+  char tmp[30];
   uint16_t *cell_voltages = bq7693_get_cell_voltages();
   
   serial_debug_send_message("V:");
   
   for (int i=0; i<7; ++i)
   {
-    sprintf(debug_msg_buffer, " %d ", cell_voltages[i]);
-    serial_debug_send_message(debug_msg_buffer);
+    snprintf(tmp, sizeof(tmp), " %d ", cell_voltages[i]);
+    serial_debug_send_message(tmp);
   }
 
-  serial_debug_send_message(debug_msg_buffer);
-  sprintf(debug_msg_buffer, "P: %d\r\n", bq7693_get_pack_voltage());
-
-  serial_debug_send_message(debug_msg_buffer);
+  snprintf(tmp, sizeof(tmp), "P: %d\r\n", bq7693_get_pack_voltage());
+  serial_debug_send_message(tmp);
 #endif
 }
 
@@ -129,8 +148,9 @@ void serial_debug_send_cell_voltages(void)
 void serial_debug_send_pack_capacity(void)
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
-  sprintf(debug_msg_buffer, "C: %ld mAh\r\n", eeprom_data.current_charge_level/1000);
-  serial_debug_send_message(debug_msg_buffer);
+  char tmp[30];
+  snprintf(tmp, sizeof(tmp), "C: %ld mAh\r\n", eeprom_data.current_charge_level/1000);
+  serial_debug_send_message(tmp);
 #endif
 }
 
