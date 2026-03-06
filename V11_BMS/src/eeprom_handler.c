@@ -37,7 +37,7 @@ int eeprom_init(void)
     eeprom_data.cc_charge_counter_uah    = 0;
     eeprom_data.cc_discharge_counter_uah = 0;
     eeprom_data.cycle_count              = 0;
-    eeprom_data.first_cycle_done         = 0;
+    eeprom_data.health_cal_state         = HEALTH_CAL_NO_ENDPOINT;
     eeprom_write();
     eeprom_emulator_commit_page_buffer();
   }

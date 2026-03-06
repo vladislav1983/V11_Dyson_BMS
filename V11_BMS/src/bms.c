@@ -110,7 +110,7 @@ static void    bms_handle_charging(void);
 static void    bms_handle_charger_unplugged(void);
 static void    bms_enter_standby(void);
 static void    bms_leave_standby(void);
-static void    bms_health_update_capacity(int32_t measured_capacity_uah);
+static void    bms_health_update_capacity(int32_t measured_capacity_uah, bool is_charge_endpoint);
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
@@ -856,7 +856,7 @@ static void bms_handle_fault(void)
 
 			//Pack is fully discharged - coulomb counter health calibration point
 			{
-				bms_health_update_capacity(eeprom_data.cc_discharge_counter_uah);
+				bms_health_update_capacity(eeprom_data.cc_discharge_counter_uah, false);
 				eeprom_data.current_charge_level = 0;
 				eeprom_data.cc_discharge_counter_uah = 0;
 			}
@@ -979,7 +979,7 @@ static void bms_handle_charging(void)
      leds_set_led_duty(LEDS_LED_ERR_LEFT,  duty_loc);
      charging_leds_duty = (charging_leds_duty + ((charging_leds_duty > 20) ? 10 : 1)) % ((DUTY_MAX * 2) + 1);
 
-    // Detect trigger pushes for first_cycle_done reset (20 pushes = reset)
+    // Detect trigger pushes for health_cal_state reset (20 pushes = reset)
     {
       bool trigger_now = dio_read(DIO_TRIGGER_PRESSED);
       if (trigger_now && !trigger_was_pressed)
@@ -990,11 +990,10 @@ static void bms_handle_charging(void)
 
         if (trigger_push_count >= 20)
         {
-          eeprom_data.first_cycle_done = 0;
+          eeprom_data.health_cal_state = HEALTH_CAL_NO_ENDPOINT;
           trigger_push_count = 0;
           leds_off();
           leds_blink_leds_num(LEDS_LED_ERR_LEFT, 10, 100);
-          BMS_PRINT("BMS:HEALTH first_cycle_done reset by trigger\\r\\n");
         }
       }
       trigger_was_pressed = trigger_now;
@@ -1083,7 +1082,7 @@ static void bms_handle_charging(void)
       bms_state = BMS_CHARGER_CONNECTED_NOT_CHARGING;
 
       //Pack is fully charged - coulomb counter health calibration point
-      bms_health_update_capacity(eeprom_data.cc_charge_counter_uah);
+      bms_health_update_capacity(eeprom_data.cc_charge_counter_uah, true);
       eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
       eeprom_data.cc_charge_counter_uah = 0;
 
@@ -1199,11 +1198,12 @@ static void bms_leave_standby(void)
 
 //- **************************************************************************
 //! \brief  Update learned_pack_capacity using coulomb-counter measured capacity.
-//!         First cycle: directly assign measured value as learned capacity.
+//!         Requires a full charge-discharge or discharge-charge cycle before
+//!         accepting the first learned capacity value.
 //!         Subsequent cycles: IIR filter to smooth across cycles.
 //!         Updates total_pack_capacity from the learned value.
 //- **************************************************************************
-static void bms_health_update_capacity(int32_t measured_capacity_uah)
+static void bms_health_update_capacity(int32_t measured_capacity_uah, bool is_charge_endpoint)
 {
 #define HEALTH_FILTER_SHIFT                 2   // IIR filter: new = ((2^N-1)*old + measured) >> N
 
@@ -1211,23 +1211,34 @@ static void bms_health_update_capacity(int32_t measured_capacity_uah)
   if (measured_capacity_uah <= 0) return;
 
   // Sanity check: reject measurements below 25% or above 200% of current learned capacity
-  if (eeprom_data.first_cycle_done)
+  if (eeprom_data.health_cal_state >= HEALTH_CAL_DONE)
   {
     int32_t learned_capacity = eeprom_data.learned_pack_capacity;
     if (measured_capacity_uah < (learned_capacity / 4) || measured_capacity_uah > (learned_capacity * 2))
     {
-      BMS_PRINT("BMS:HEALTH rejected meas:%ld mAh\r\n", (measured_capacity_uah / 1000));
       return;
     }
   }
 
-  if (!eeprom_data.first_cycle_done)
+  if (eeprom_data.health_cal_state == HEALTH_CAL_NO_ENDPOINT)
   {
-    // First completed cycle - we don't know the real capacity,
-    // directly assign the measured value as the learned capacity
+    // First calibration endpoint reached from unknown SOC - partial cycle, skip it.
+    // Record which endpoint so we can wait for the opposite one.
+    eeprom_data.health_cal_state = is_charge_endpoint ? HEALTH_CAL_SEEN_CHARGE : HEALTH_CAL_SEEN_DISCHARGE;
+    return;
+  }
+  else if (eeprom_data.health_cal_state == HEALTH_CAL_SEEN_DISCHARGE || eeprom_data.health_cal_state == HEALTH_CAL_SEEN_CHARGE)
+  {
+    bool last_was_charge = (eeprom_data.health_cal_state == HEALTH_CAL_SEEN_CHARGE);
+    if (last_was_charge == is_charge_endpoint)
+    {
+      // Same endpoint type again (e.g. charge->partial discharge->charge) - still partial, skip
+      return;
+    }
+
+    // Opposite endpoint reached - this is a full cycle measurement
     eeprom_data.learned_pack_capacity = measured_capacity_uah;
-    eeprom_data.first_cycle_done = 1;
-    BMS_PRINT("BMS:HEALTH first cycle, learned:%ld mAh\r\n", (measured_capacity_uah / 1000));
+    eeprom_data.health_cal_state      = HEALTH_CAL_DONE;
   }
   else
   {
@@ -1243,12 +1254,6 @@ static void bms_health_update_capacity(int32_t measured_capacity_uah)
   {
     eeprom_data.cycle_count++;
   }
-
-  BMS_PRINT("BMS:HEALTH meas:%ld mAh, learned:%ld mAh, SoH:%u%%, cycles:%u\r\n",
-                                                                                (measured_capacity_uah / 1000),
-                                                                                (eeprom_data.learned_pack_capacity / 1000),
-                                                                                bms_get_soh(),
-                                                                                eeprom_data.cycle_count);
 }
 
 /*-----------------------------------------------------------------------------

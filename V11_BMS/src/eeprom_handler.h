@@ -21,8 +21,14 @@
 #include "leds.h"
 #include "serial_debug.h"
 
+//Health calibration state values
+#define HEALTH_CAL_NO_ENDPOINT      0   // no calibration endpoint reached yet
+#define HEALTH_CAL_SEEN_DISCHARGE   1   // first endpoint was full discharge
+#define HEALTH_CAL_SEEN_CHARGE      2   // first endpoint was full charge
+#define HEALTH_CAL_DONE             3   // first full cycle completed, capacity learned
+
 //A struct to represent the stored eeprom data
-struct eeprom_data 
+struct eeprom_data
 {
   int32_t total_pack_capacity;      //micro-amp-hours - working capacity used for SOC/runtime
   int32_t current_charge_level;     //micro-amp-hours
@@ -30,7 +36,7 @@ struct eeprom_data
   int32_t cc_charge_counter_uah;    //micro-amp-hours - accumulated charge during a charge cycle
   int32_t cc_discharge_counter_uah; //micro-amp-hours - accumulated discharge during a discharge cycle
   uint16_t cycle_count;             //full charge/discharge cycle count
-  uint8_t  first_cycle_done;        //0 = first cycle not yet completed, 1 = capacity learned
+  uint8_t  health_cal_state;
 } ;
 
 int eeprom_init(void);
