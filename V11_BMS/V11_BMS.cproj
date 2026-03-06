@@ -248,7 +248,7 @@
       </framework-data>
     </AsfFrameworkConfig>
     <avrtool>com.atmel.avrdbg.tool.samice</avrtool>
-    <avrtoolserialnumber>69650156</avrtoolserialnumber>
+    <avrtoolserialnumber>69651024</avrtoolserialnumber>
     <avrdeviceexpectedsignature>0x1000140D</avrdeviceexpectedsignature>
     <avrtoolinterface>SWD</avrtoolinterface>
     <com_atmel_avrdbg_tool_atmelice>
@@ -272,7 +272,7 @@
         <JlinkConfigFile>C:\Users\VG\Documents\V11_Dyson_BMS\V11_BMS\jlink.config</JlinkConfigFile>
       </ToolOptions>
       <ToolType>com.atmel.avrdbg.tool.samice</ToolType>
-      <ToolNumber>69650156</ToolNumber>
+      <ToolNumber>69651024</ToolNumber>
       <ToolName>J-Link</ToolName>
     </com_atmel_avrdbg_tool_samice>
     <custom>
