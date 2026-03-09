@@ -20,6 +20,7 @@
 #include "config.h"
 #include "leds.h"
 #include "serial_debug.h"
+#include "crc.h"
 
 //Health calibration state values
 #define HEALTH_CAL_NO_ENDPOINT      0   // no calibration endpoint reached yet
@@ -35,8 +36,9 @@ struct eeprom_data
   int32_t learned_pack_capacity;    //micro-amp-hours - IIR filtered capacity from coulomb counter
   int32_t cc_charge_counter_uah;    //micro-amp-hours - accumulated charge during a charge cycle
   int32_t cc_discharge_counter_uah; //micro-amp-hours - accumulated discharge during a discharge cycle
-  uint16_t cycle_count;             //full charge/discharge cycle count
-  uint8_t  health_cal_state;
+  int32_t  cycle_count;              //full charge/discharge cycle count
+  int32_t  health_cal_state;
+  uint32_t crc32;
 } ;
 
 int eeprom_init(void);
