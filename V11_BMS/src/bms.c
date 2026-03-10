@@ -217,18 +217,27 @@ void bms_interrupt_process(void)
           eeprom_data.cc_discharge_counter_uah += (-cc_uah); // store as positive value
         }
 
-        //We thought the pack was full, but it's still charging, so we need to update its' size.
+        // limit current_charge_level to accepted range
+        // also correct health counters so they don't include clamped overflow
         if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
         {
+          int32_t overflow = eeprom_data.current_charge_level - eeprom_data.total_pack_capacity;
           eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
+          eeprom_data.cc_charge_counter_uah -= overflow;
+          if (eeprom_data.cc_charge_counter_uah < 0)
+          {
+            eeprom_data.cc_charge_counter_uah = 0;
+          }
         }
-        
-        //We thought the pack was empty, but it isn't, so again, we need to update our estimate of what it can hold!
-        if (eeprom_data.current_charge_level < 0)
+        else if (eeprom_data.current_charge_level < 0)
         {
-          //subtracting negative numbers will increment the pack capacity.
-          eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
+          int32_t underflow = -eeprom_data.current_charge_level;
           eeprom_data.current_charge_level = 0;
+          eeprom_data.cc_discharge_counter_uah -= underflow;
+          if (eeprom_data.cc_discharge_counter_uah < 0)
+          {
+            eeprom_data.cc_discharge_counter_uah = 0;
+          }
         }
       }
       //Update the CC bit so it'll refire in another 250mS as per datasheet.
@@ -247,11 +256,11 @@ uint16_t bms_get_soc_x100(void)
 {
   uint16_t soc = 100;
   int32_t current_charge_level = eeprom_data.current_charge_level;
-  int16_t total_pack_capacity  = eeprom_data.total_pack_capacity  >> 10;
+  int32_t total_pack_capacity  = eeprom_data.total_pack_capacity >> 10;
 
   if(total_pack_capacity > 0 && current_charge_level > 0)
-  {   
-    soc = (current_charge_level * (uint16_t)ROUND((100.0f * 100.0f) / 1024.0f)) / total_pack_capacity;
+  {
+    soc = ((current_charge_level >> 10) * 10000) / total_pack_capacity;
     soc = (soc > 10000) ? 10000 : ((soc == 0) ? 100 : soc);
   }
 
