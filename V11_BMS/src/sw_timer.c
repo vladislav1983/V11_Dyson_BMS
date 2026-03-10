@@ -144,14 +144,13 @@ bool sw_timer_is_elapsed(sw_timer * sw_timer_ptr, uint32_t timeout)
 //- **************************************************************************
 sw_timer sw_timer_get_elapsed_time(sw_timer * sw_timer_ptr)
 {
-  uint32_t Delay = 0;
+  uint32_t Delay;
 
   // A timer is never equal to 0
   // The 0 value is reserved to the timer stopped
   if ( *sw_timer_ptr == 0 )
   {
-    // This function must not be call with a stopped tempo
-    Assert(false);
+    Delay = 0;
   }
   else
   {

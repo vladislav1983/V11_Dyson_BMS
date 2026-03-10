@@ -14,8 +14,6 @@ static void eeprom_write_defaults(void)
   eeprom_data.total_pack_capacity      = (PACK_MAX_CAPACITY_MAH       * 1000ul);  //in micro-amp-hours
   eeprom_data.current_charge_level     = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul);
   eeprom_data.learned_pack_capacity    = (PACK_MAX_CAPACITY_MAH       * 1000ul);  //initial guess
-  eeprom_data.cc_charge_counter_uah    = 0;
-  eeprom_data.cc_discharge_counter_uah = 0;
   eeprom_data.cycle_count              = 0;
   eeprom_data.health_cal_state         = HEALTH_CAL_NO_ENDPOINT;
   eeprom_write();

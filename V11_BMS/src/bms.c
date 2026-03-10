@@ -67,6 +67,8 @@ static uint16_t charge_pause_counter = 0;
 static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
 static bool process_bms_interrupt = false;
+static int32_t charge_start_level = 0;
+static int32_t discharge_start_level = 0;
 
 extern volatile struct eeprom_data eeprom_data;
 
@@ -206,38 +208,15 @@ void bms_interrupt_process(void)
         cc_uah = ccVal * (int16_t)(((8.44f * 250.0f * 32768.0f) / (3600.0f)));
         cc_uah /= 32768;
         eeprom_data.current_charge_level += cc_uah;
-        
-        // Accumulate into charge/discharge counters for health calibration
-        if (cc_uah > 0)
-        {
-          eeprom_data.cc_charge_counter_uah += cc_uah;
-        }
-        else if (cc_uah < 0)
-        {
-          eeprom_data.cc_discharge_counter_uah += (-cc_uah); // store as positive value
-        }
 
         // limit current_charge_level to accepted range
-        // also correct health counters so they don't include clamped overflow
         if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
         {
-          int32_t overflow = eeprom_data.current_charge_level - eeprom_data.total_pack_capacity;
           eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
-          eeprom_data.cc_charge_counter_uah -= overflow;
-          if (eeprom_data.cc_charge_counter_uah < 0)
-          {
-            eeprom_data.cc_charge_counter_uah = 0;
-          }
         }
         else if (eeprom_data.current_charge_level < 0)
         {
-          int32_t underflow = -eeprom_data.current_charge_level;
           eeprom_data.current_charge_level = 0;
-          eeprom_data.cc_discharge_counter_uah -= underflow;
-          if (eeprom_data.cc_discharge_counter_uah < 0)
-          {
-            eeprom_data.cc_discharge_counter_uah = 0;
-          }
         }
       }
       //Update the CC bit so it'll refire in another 250mS as per datasheet.
@@ -804,8 +783,8 @@ static void bms_handle_discharging(void)
   {
 		//Sanity check, hopefully already checked prior to here!
 		bq7693_enable_discharge();
-    // Reset discharge counter at start of discharge cycle
-    eeprom_data.cc_discharge_counter_uah = 0;
+    // Record charge level at start of discharge cycle
+    discharge_start_level = eeprom_data.current_charge_level;
     sw_timer_delay_ms(300);
     prot_set_trigger(true);
 	}
@@ -865,9 +844,9 @@ static void bms_handle_fault(void)
 
 			//Pack is fully discharged - coulomb counter health calibration point
 			{
-				bms_health_update_capacity(eeprom_data.cc_discharge_counter_uah, false);
+				int32_t measured = discharge_start_level - eeprom_data.current_charge_level;
+				bms_health_update_capacity(measured, false);
 				eeprom_data.current_charge_level = 0;
-				eeprom_data.cc_discharge_counter_uah = 0;
 			}
 		}
 		else 
@@ -968,8 +947,8 @@ static void bms_handle_charging(void)
   //Enable the charge FET in the BQ7693.
   bq7693_enable_charge();
   
-  // Reset charge counter at start of charge cycle
-  eeprom_data.cc_charge_counter_uah = 0;
+  // Record charge level at start of charge cycle
+  charge_start_level = eeprom_data.current_charge_level;
   charge_pause_counter = 0;
   
   while (1) 
@@ -1091,9 +1070,11 @@ static void bms_handle_charging(void)
       bms_state = BMS_CHARGER_CONNECTED_NOT_CHARGING;
 
       //Pack is fully charged - coulomb counter health calibration point
-      bms_health_update_capacity(eeprom_data.cc_charge_counter_uah, true);
+      {
+        int32_t measured = eeprom_data.current_charge_level - charge_start_level;
+        bms_health_update_capacity(measured, true);
+      }
       eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
-      eeprom_data.cc_charge_counter_uah = 0;
 
       BMS_PRINT("BMS:CHARGING Stopped\r\n");
 #ifdef SERIAL_DEBUG
