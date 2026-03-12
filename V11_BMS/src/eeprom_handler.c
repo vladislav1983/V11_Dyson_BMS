@@ -9,50 +9,73 @@
 #include "eeprom_handler.h"
 volatile struct eeprom_data eeprom_data;
 
-int eeprom_init(void) 
+static void eeprom_write_defaults(void)
+{
+  eeprom_data.total_pack_capacity      = (PACK_MAX_CAPACITY_MAH       * 1000ul);  //in micro-amp-hours
+  eeprom_data.current_charge_level     = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul);
+  eeprom_write();
+}
+
+int eeprom_init(void)
 {
   enum status_code error_code = eeprom_emulator_init();
 
-  if (error_code == STATUS_ERR_NO_MEMORY) 
+  if (error_code == STATUS_ERR_NO_MEMORY)
   {
     //We are here because the fuses are set to 0x07, meaning eeprom is not enabled.
-    //Show a few slow flashes to make it clear we're up to something, then reprogram fuses and reset 
+    //Show a few slow flashes to make it clear we're up to something, then reprogram fuses and reset
     //the mcu.
     for (int i=0; i<4; ++i)
-     {
+    {
       leds_blink_leds(2000);
     }
     //This will update the fuses then reset the MCU
     eeprom_fuses_set();
   }
-  else if (error_code != STATUS_OK) 
+  else if (error_code != STATUS_OK)
   {
     //Init/format the eeprom
     eeprom_emulator_erase_memory();
     error_code = eeprom_emulator_init();
-    //Write an initial guestimate of what a pack capacity might look like, we'll fine tune this by charging and discharging.
-    eeprom_data.total_pack_capacity  = (PACK_MAX_CAPACITY_MAH       * 1000ul);         //in micro-amp-hours
-    eeprom_data.current_charge_level = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul); 
-    eeprom_write();
-    eeprom_emulator_commit_page_buffer();
+    eeprom_write_defaults();
   }
-  
+  else
+  {
+    //EEPROM emulator OK - read data and verify CRC
+    if (eeprom_read() != 0)
+    {
+      //CRC mismatch - data corrupted, reinitialize with defaults
+      eeprom_write_defaults();
+    }
+  }
+
   return error_code;
 }
 
 int eeprom_read(void)
- {
+{
   uint8_t buffer[EEPROM_PAGE_SIZE];
   eeprom_emulator_read_page(0, buffer);
   memcpy((void*)&eeprom_data, buffer, sizeof(eeprom_data));
+
+  //Verify CRC over data fields (everything before the crc32 field)
+  uint32_t calc = calc_crc32(0xFFFFFFFF, (uint8_t *)&eeprom_data,
+      sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
+  if (calc != eeprom_data.crc32) {
+    return -1;  //CRC mismatch - data corrupted
+  }
   return 0;
 }
 
-int eeprom_write(void) 
+int eeprom_write(void)
 {
+  //Compute CRC over data fields (everything before the crc32 field)
+  eeprom_data.crc32 = calc_crc32(0xFFFFFFFF, (uint8_t *)&eeprom_data,
+      sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
+
   uint8_t buffer[EEPROM_PAGE_SIZE];
   memcpy(buffer, (const void*)&eeprom_data, sizeof(eeprom_data));
-  eeprom_emulator_write_page(0, buffer);  
+  eeprom_emulator_write_page(0, buffer);
   eeprom_emulator_commit_page_buffer();
   return 0;
 }

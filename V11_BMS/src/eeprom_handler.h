@@ -20,12 +20,14 @@
 #include "config.h"
 #include "leds.h"
 #include "serial_debug.h"
+#include "crc.h"
 
 //A struct to represent the stored eeprom data
 struct eeprom_data 
 {
   int32_t total_pack_capacity;    //micro-amp-hours
   int32_t current_charge_level;   //micro-amp-hours
+  uint32_t crc32;
 } ;
 
 int eeprom_init(void);

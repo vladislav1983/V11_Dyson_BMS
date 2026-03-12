@@ -82,9 +82,9 @@ void serial_debug_init()
   while (usart_init(&debug_usart,SERCOM0, &config_usart) != STATUS_OK) { }
   //Enable
   usart_enable(&debug_usart);
+    queue_head = 0;  // write index
+    queue_tail = 0;  // read index
 #endif
-  queue_head = 0;  // write index
-  queue_tail = 0;  // read index
 }
 
 //- **************************************************************************
