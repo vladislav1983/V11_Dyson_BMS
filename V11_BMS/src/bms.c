@@ -46,6 +46,7 @@ volatile bool     force_sleep = false;
 #endif
 
 #define ROUND(x) (((x) + 0.5))
+#define PACK_CAPACITY_UPPER_BOUND_UAH       (PACK_MAX_CAPACITY_MAH * 1200ul)  // 120% of nominal, in uAh
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
@@ -209,14 +210,26 @@ void bms_interrupt_process(void)
         //We thought the pack was full, but it's still charging, so we need to update its' size.
         if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
         {
+          //Dampen: average old capacity with new measurement to reduce CC noise sensitivity
+          eeprom_data.total_pack_capacity = (eeprom_data.total_pack_capacity + eeprom_data.current_charge_level) / 2;
+
+          //Hard cap at 120% of nominal to prevent runaway growth
+          if (eeprom_data.total_pack_capacity > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH)
+            eeprom_data.total_pack_capacity = (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH;
+
           eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
         }
         
         //We thought the pack was empty, but it isn't, so again, we need to update our estimate of what it can hold!
         if (eeprom_data.current_charge_level < 0)
         {
-          //subtracting negative numbers will increment the pack capacity.
-          eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
+          //Dampen: only add half the overshoot to reduce CC noise sensitivity
+          eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level / 2;
+
+          //Hard cap at 120% of nominal to prevent runaway growth
+          if (eeprom_data.total_pack_capacity > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH)
+            eeprom_data.total_pack_capacity = (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH;
+            
           eeprom_data.current_charge_level = 0;
         }
       }
@@ -709,7 +722,7 @@ static void bms_handle_idle(void)
     sw_timer_delay_ms(50);
 
   } while (false == sw_timer_is_elapsed(&bms_timer, sleep_time));
-  	
+    
   //Reached the end of our wait loop, with nobody pulling the trigger, or plugging in charger.
   //Transit to sleep state
   bms_state = BMS_SLEEP;
@@ -720,16 +733,16 @@ static void bms_handle_idle(void)
 //- **************************************************************************
 static void bms_handle_trigger_pulled(void)
 {
-	//Check if it's safe to discharge or not.
-	if (bms_is_safe_to_discharge()) 
+  //Check if it's safe to discharge or not.
+  if (bms_is_safe_to_discharge()) 
   {
-		//All go - unleash the power!
-		bms_state = BMS_DISCHARGING;
-	}
-	else 
+    //All go - unleash the power!
+    bms_state = BMS_DISCHARGING;
+  }
+  else 
   {
-		bms_state = BMS_FAULT;
-	}
+    bms_state = BMS_FAULT;
+  }
 }
 
 //- **************************************************************************
@@ -766,13 +779,13 @@ static void bms_handle_discharging(void)
   uint8_t debug_print_cnt = 0;
 #endif
 
-	if (bms_is_safe_to_discharge()) 
+  if (bms_is_safe_to_discharge()) 
   {
-		//Sanity check, hopefully already checked prior to here!
-		bq7693_enable_discharge();
+    //Sanity check, hopefully already checked prior to here!
+    bq7693_enable_discharge();
     sw_timer_delay_ms(300);
     prot_set_trigger(true);
-	}
+  }
 
   while (1)
   {
@@ -814,41 +827,43 @@ static void bms_handle_discharging(void)
 static void bms_handle_fault(void)
 {
   //Turn all the LEDs off.
-	leds_off();
-	prot_set_trigger(false);
+  leds_off();
+  prot_set_trigger(false);
   bq7693_disable_discharge();
   port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
 
-	//Show the error status and continue to show it, until trigger released and charger unplugged.
-	do 
+  //Show the error status and continue to show it, until trigger released and charger unplugged.
+  do 
   {
-		if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE ) 
+    if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE ) 
     {
-			//If the problem is just a flat pack, blink
-			leds_blink_leds(50);
+      //If the problem is just a flat pack, blink
+      leds_blink_leds(50);
 
-			//We also need to update the pack capacity as it's flat at this point.
-			if (eeprom_data.current_charge_level > 0 && eeprom_data.total_pack_capacity > eeprom_data.current_charge_level) 
+      //Pack is flat — correct capacity estimate and zero the charge level.
+      //No precondition on current_charge_level > 0: the CC ISR underflow guard
+      //may have already clamped it to 0, but we still need to mark pack empty.
+      if (eeprom_data.total_pack_capacity > eeprom_data.current_charge_level)
       {
-				eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
-				eeprom_data.current_charge_level = 0;				
-			}
-		}
-		else 
+        eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
+      }
+      eeprom_data.current_charge_level = 0;
+    }
+    else 
     {
-			//Flash the red error led the number of times indicated by the fault code.
-			for (int i=0; i < bms_error; ++i)
+      //Flash the red error led the number of times indicated by the fault code.
+      for (int i=0; i < bms_error; ++i)
       {
-				leds_blink_leds(500);
-			}
+        leds_blink_leds(500);
+      }
 
-			sw_timer_delay_ms(2000);
-		}
-	} 
-	while (dio_read(DIO_TRIGGER_PRESSED) || dio_read(DIO_CHARGER_CONNECTED));
-		
-	//Return to idle
-	bms_state = BMS_IDLE;	
+      sw_timer_delay_ms(2000);
+    }
+  } 
+  while (dio_read(DIO_TRIGGER_PRESSED) || dio_read(DIO_CHARGER_CONNECTED));
+    
+  //Return to idle
+  bms_state = BMS_IDLE;  
 }
 
 //- **************************************************************************
@@ -915,6 +930,11 @@ static void bms_handle_charging(void)
   uint8_t debug_print_cnt = 0;
 #endif
 
+  // First-cycle reset: 20 trigger pushes while charging resets learned capacity
+  uint8_t trigger_push_count = 0;
+  bool    trigger_was_pressed = false;
+  sw_timer trigger_timeout_timer = 0;
+
   //Sanity check...
   if (!bms_is_safe_to_charge()) 
   {
@@ -944,6 +964,32 @@ static void bms_handle_charging(void)
      leds_set_led_duty(LEDS_LED_ERR_RIGHT, duty_loc);
      leds_set_led_duty(LEDS_LED_ERR_LEFT,  duty_loc);
      charging_leds_duty = (charging_leds_duty + ((charging_leds_duty > 20) ? 10 : 1)) % ((DUTY_MAX * 2) + 1);
+
+    // Detect trigger pushes for eeprom reset (20 pushes = reset)
+    {
+      bool trigger_now = dio_read(DIO_TRIGGER_PRESSED);
+      if (trigger_now && !trigger_was_pressed)
+      {
+        // Rising edge detected
+        trigger_push_count++;
+        sw_timer_start(&trigger_timeout_timer);
+
+        if (trigger_push_count >= 20)
+        {
+          eeprom_write_defaults();
+          trigger_push_count = 0;
+          leds_off();
+          leds_blink_leds_num(LEDS_LED_ERR_LEFT, 10, 100);
+        }
+      }
+      trigger_was_pressed = trigger_now;
+
+      // If trigger not pressed for >2 seconds, reset counter
+      if (trigger_push_count > 0 && sw_timer_is_elapsed(&trigger_timeout_timer, 2000))
+      {
+        trigger_push_count = 0;
+      }
+    }
 
     if (!bms_is_safe_to_charge()) 
     {

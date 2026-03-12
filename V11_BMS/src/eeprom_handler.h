@@ -30,9 +30,10 @@ struct eeprom_data
   uint32_t crc32;
 } ;
 
-int eeprom_init(void);
-int eeprom_read(void);
-int eeprom_write(void);
-int eeprom_fuses_set(void);
+extern int eeprom_init(void);
+extern int eeprom_read(void);
+extern int eeprom_write(void);
+extern int eeprom_fuses_set(void);
+extern void eeprom_write_defaults(void);
 
 #endif /* EEPROM_H_ */
