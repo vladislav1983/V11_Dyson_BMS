@@ -68,6 +68,7 @@ static uint16_t charge_pause_counter = 0;
 static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
 static bool process_bms_interrupt = false;
+static bool full_discharge_seen = false;
 
 extern volatile struct eeprom_data eeprom_data;
 
@@ -207,31 +208,13 @@ void bms_interrupt_process(void)
         cc_uah /= 32768;
         eeprom_data.current_charge_level += cc_uah;
         
-        //We thought the pack was full, but it's still charging, so we need to update its' size.
+        // Clamp charge level to valid range. Capacity learning happens
+        // only at charge completion endpoints, not in the ISR.
         if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
-        {
-          //Dampen: average old capacity with new measurement to reduce CC noise sensitivity
-          eeprom_data.total_pack_capacity = (eeprom_data.total_pack_capacity + eeprom_data.current_charge_level) / 2;
-
-          //Hard cap at 120% of nominal to prevent runaway growth
-          if (eeprom_data.total_pack_capacity > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH)
-            eeprom_data.total_pack_capacity = (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH;
-
           eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
-        }
-        
-        //We thought the pack was empty, but it isn't, so again, we need to update our estimate of what it can hold!
-        if (eeprom_data.current_charge_level < 0)
-        {
-          //Dampen: only add half the overshoot to reduce CC noise sensitivity
-          eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level / 2;
 
-          //Hard cap at 120% of nominal to prevent runaway growth
-          if (eeprom_data.total_pack_capacity > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH)
-            eeprom_data.total_pack_capacity = (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH;
-            
+        if (eeprom_data.current_charge_level < 0)
           eeprom_data.current_charge_level = 0;
-        }
       }
       //Update the CC bit so it'll refire in another 250mS as per datasheet.
       bq7693_write_register(SYS_STAT, 0x80);//Clear CC bit.
@@ -840,14 +823,10 @@ static void bms_handle_fault(void)
       //If the problem is just a flat pack, blink
       leds_blink_leds(50);
 
-      //Pack is flat — correct capacity estimate and zero the charge level.
-      //No precondition on current_charge_level > 0: the CC ISR underflow guard
-      //may have already clamped it to 0, but we still need to mark pack empty.
-      if (eeprom_data.total_pack_capacity > eeprom_data.current_charge_level)
-      {
-        eeprom_data.total_pack_capacity -= eeprom_data.current_charge_level;
-      }
+      // Anchor counter to known empty state. Capacity learning deferred
+      // to charge completion where both endpoints are known.
       eeprom_data.current_charge_level = 0;
+      full_discharge_seen = true;
     }
     else 
     {
@@ -1067,8 +1046,19 @@ static void bms_handle_charging(void)
 
       bms_state = BMS_CHARGER_CONNECTED_NOT_CHARGING;
 
-      //Set charge level to equal capacity.
-      eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
+      // Learn capacity only from full 0->100% cycles
+      if (full_discharge_seen)
+      {
+        eeprom_data.total_pack_capacity = (eeprom_data.total_pack_capacity + eeprom_data.current_charge_level) / 2;
+
+        if (eeprom_data.total_pack_capacity > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH)
+          eeprom_data.total_pack_capacity = (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH;
+
+        full_discharge_seen = false;
+      }
+
+      // Endpoint recalibration: anchor counter to known full state
+      eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
 
       BMS_PRINT("BMS:CHARGING Stopped\r\n");
 #ifdef SERIAL_DEBUG
