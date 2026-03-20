@@ -4,7 +4,7 @@
  * Created: 21-Jan-26 10:02:57
  * Author : Vladislav Gyurov
  * License: GNU GPL v3 or later
- */ 
+ */
  /*-----------------------------------------------------------------------------
     INCLUDE FILES
 -----------------------------------------------------------------------------*/
@@ -38,10 +38,9 @@
     DEFINITION OF LOCAL CONSTANTS
 -----------------------------------------------------------------------------*/
 /**
-* The NTC table has 129 interpolation points.
-* Unit:0.1 °C
-*
-*/
+ * NTC lookup table with 129 interpolation points.
+ * Unit: 0.1 degC
+ */
 int16_t NTC_table[129] = {
   1956, 1607, 1258, 1078, 958, 870, 800, 743,
   694, 652, 615, 582, 552, 525, 500, 477, 455,
@@ -68,27 +67,19 @@ int16_t NTC_table[129] = {
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
+
 /**
-* \brief    Converts the ADC result into a temperature value.
-*
-*           P1 and p2 are the interpolating point just before and after the
-*           ADC value. The function interpolates between these two points
-*           The resulting code is very small and fast.
-*           Only one integer multiplication is used.
-*           The compiler can replace the division by a shift operation.
-*
-*           In the temperature range from -45°C to 80°C the error
-*           caused by the usage of a table is 0.213°C
-*
-* \param    adc_value  The converted ADC result
-* \return              The temperature in 0.1 °C
-*
-*/
+ * @brief Convert ADC reading to temperature using NTC lookup table.
+ *
+ * Interpolates between two adjacent table points. ADC value is normalized
+ * from Vref = 3.3V/1.48 to 3.3V range before lookup.
+ * Error in range -45 to +80 degC is 0.213 degC.
+ *
+ * @param adc_value  Raw ADC conversion result.
+ * @return           Temperature in 0.1 degC units.
+ */
 int16_t NTC_ADC2Temperature(uint16_t adc_value)
-{ 
+{
   int16_t p1,p2;
   uint32_t adc_value_norm_u32;
   uint16_t adc_value_norm_u16;
@@ -101,17 +92,10 @@ int16_t NTC_ADC2Temperature(uint16_t adc_value)
   /* Estimate the interpolating point before and after the ADC value. */
   p1 = NTC_table[ (adc_value_norm_u16 >> 5)  ];
   p2 = NTC_table[ (adc_value_norm_u16 >> 5)+1];
-  
+
   /* Interpolate between both points. */
   return p1 - ( (p1-p2) * (adc_value_norm_u16 & 0x001F) ) / 32;
 };
-
-/*-----------------------------------------------------------------------------
-    DEFINITION OF LOCAL FUNCTIONS
------------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
 
 /*-----------------------------------------------------------------------------
     END OF MODULE

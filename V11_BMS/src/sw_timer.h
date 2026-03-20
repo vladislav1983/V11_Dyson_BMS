@@ -11,7 +11,7 @@
   INCLUDE FILES
 ---------------------------------------------------------------------------- */
 #include "asf.h"
-#include "protocol.h"
+#include "dsn_protocol.h"
 #include "bms_adc.h"
 #include "bms.h"
 #include "dio.h"
@@ -29,7 +29,7 @@ typedef uint32_t sw_timer;
 #define SW_TIMER_TICK_MS      1
 #define SW_TIMER_SERVICES()   \
 { \
-  prot_mainloop(); \
+  dsn_prot_mainloop(); \
   bms_interrupt_process(); \
   dio_mainloop(); \
   bms_wdt_mainloop();\

@@ -739,6 +739,12 @@
     <Compile Include="src\dio.h">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="src\dsn_protocol.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\dsn_protocol.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="src\sw_timer.c">
       <SubType>compile</SubType>
     </Compile>
@@ -776,12 +782,6 @@
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="src\ntc.h">
-      <SubType>compile</SubType>
-    </Compile>
-    <Compile Include="src\protocol.c">
-      <SubType>compile</SubType>
-    </Compile>
-    <Compile Include="src\protocol.h">
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="src\serial_debug.c">

@@ -4,7 +4,7 @@
  * Created: 21-Jan-26 12:27:18
  * Author : Vladislav Gyurov
  * License: GNU GPL v3 or later
- */ 
+ */
  /*-----------------------------------------------------------------------------
     INCLUDE FILES
 -----------------------------------------------------------------------------*/
@@ -37,16 +37,13 @@
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
 -----------------------------------------------------------------------------*/
-static const uint32_t c_wCRC32Table[16] = 
+static const uint32_t c_wCRC32Table[16] =
 {
   0x00000000, 0x1DB71064, 0x3B6E20C8, 0x26D930AC,
   0x76DC4190, 0x6B6B51F4, 0x4DB26158, 0x5005713C,
   0xEDB88320, 0xF00F9344, 0xD6D6A3E8, 0xCB61B38C,
   0x9B64C2B0, 0x86D3D2D4, 0xA00AE278, 0xBDBDF21C,
 };
-
-static const uint16_t crc16_C9A7_table_lo[] = { 0x0000,0x5B1B,0xB636,0xED2D,0xA74B,0xFC50,0x117D,0x4A66,0x85B1,0xDEAA,0x3387,0x689C,0x22FA,0x79E1,0x94CC,0xCFD7 };
-static const uint16_t crc16_C9A7_table_hi[] = { 0x0000,0xC045,0x4BAD,0x8BE8,0x975A,0x571F,0xDCF7,0x1CB2,0xE593,0x25D6,0xAE3E,0x6E7B,0x72C9,0xB28C,0x3964,0xF921 };
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
@@ -55,71 +52,62 @@ static const uint16_t crc16_C9A7_table_hi[] = { 0x0000,0xC045,0x4BAD,0x8BE8,0x97
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//!         CRC32
-//*!        Poly: 0x04C11DB7
-//*!        Init: crc_init
-//*!        RefIn: True
-//*!        RefOut: True
-//*!        XorOut: 0x00000000
-//- **************************************************************************
-uint32_t calc_crc32(uint32_t crc_init,  uint8_t * data_ptr, uint16_t len)
+
+/**
+ * @brief Compute CRC32 matching original Dyson firmware.
+ *
+ * Poly: 0x04C11DB7 (reflected: 0xEDB88320), Init: 0xFFFFFFFF,
+ * RefIn/RefOut: true, XorOut: 0xFFFFFFFF.
+ * Pads input to 4-byte alignment with zero bytes.
+ *
+ * @param data  Input data buffer.
+ * @param len   Number of bytes to process.
+ * @return      CRC32 checksum.
+ */
+uint32_t calc_crc32(const uint8_t *data, uint16_t len)
 {
   uint16_t i;
-  uint32_t crc32 = crc_init;
+  uint32_t crc = 0xFFFFFFFF;
+  uint16_t padded_len = (len + 3u) & ~3u;
 
-  if(NULL == data_ptr)
+  for (i = 0; i < padded_len; i++)
   {
-    return 0;
+    uint8_t byte = (i < len) ? data[i] : 0x00;
+    crc = (crc >> 4) ^ c_wCRC32Table[(crc & 0x0F) ^ (byte & 0x0F)];
+    crc = (crc >> 4) ^ c_wCRC32Table[(crc & 0x0F) ^ (byte >> 4)];
   }
 
-  for (i = 0; i < len; i++)
-  {
-    crc32 = (crc32 >> 4) ^ c_wCRC32Table[(crc32 & 0x0000000F) ^ (*data_ptr & 0x0F)];
-    crc32 = (crc32 >> 4) ^ c_wCRC32Table[(crc32 & 0x0000000F) ^ (*data_ptr >> 4)];
-    data_ptr++;
-  }
-
-  return (crc32);
+  return ~crc;
 }
 
-//- **************************************************************************
-//! \brief 
-//!         CRC32
-//*!        Poly: 0xc9a7
-//*!        Init: crc_init
-//*!        RefIn: True
-//*!        RefOut: True
-//*!        XorOut: 0x00000000
-//- **************************************************************************
-uint16_t calc_crc16_C9A7(uint16_t crc_init, uint8_t * data_ptr, uint16_t len)
+/**
+ * @brief Compute CRC8 matching original Dyson firmware header checksum.
+ *
+ * Poly: 0xE0 (reflected), Init: 0xFF, RefIn/RefOut: true, XorOut: 0xFF.
+ * Used for 2-byte SIZE field header checksum.
+ *
+ * @param data  Input data buffer.
+ * @param len   Number of bytes to process.
+ * @return      CRC8 checksum.
+ */
+uint8_t calc_crc8(const uint8_t *data, uint8_t len)
 {
-  uint16_t tbl_tdx;
-  uint16_t i;
-  uint16_t crc_u16 = crc_init;
+  uint8_t crc = 0xFF;
 
-  if(NULL == data_ptr)
+  for (uint8_t i = 0; i < len; i++)
   {
-    return 0;
+    crc ^= data[i];
+    for (uint8_t bit = 0; bit < 8; bit++)
+    {
+      if (crc & 0x01)
+        crc = (crc >> 1) ^ 0xE0;
+      else
+        crc >>= 1;
+    }
   }
 
-  for (i = 0; i < len; i++)
-  {
-    tbl_tdx = (crc_u16 ^ *data_ptr) & 0xFF;
-    crc_u16 = (crc_u16 >> 8) ^ crc16_C9A7_table_lo[tbl_tdx & 0x0F] ^ crc16_C9A7_table_hi[tbl_tdx >> 4];
-    data_ptr++;
-  }
-
-  return (crc_u16);
+  return crc ^ 0xFF;
 }
-
-/*-----------------------------------------------------------------------------
-    DEFINITION OF LOCAL FUNCTIONS
------------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
 
 /*-----------------------------------------------------------------------------
     END OF MODULE

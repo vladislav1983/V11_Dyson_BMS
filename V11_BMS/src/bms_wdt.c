@@ -4,7 +4,7 @@
  * Created: 14/02/2026 15:06:58
  * Author : Vladislav Gyurov
  * License: GNU GPL v3 or later
- */ 
+ */
  /*-----------------------------------------------------------------------------
     INCLUDE FILES
 -----------------------------------------------------------------------------*/
@@ -49,9 +49,14 @@ static void bms_wdt_early_warning_callback(void);
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
+
+/**
+ * @brief Initialise the SAMD20 hardware watchdog.
+ *
+ * Configures WDT with a 16384-clock timeout, registers an early-warning
+ * callback that shuts down charge/discharge FETs, and starts the
+ * periodic kick timer.
+ */
 void bms_wdt_init(void)
 {
 	struct wdt_conf config_wdt;
@@ -68,9 +73,11 @@ void bms_wdt_init(void)
   sw_timer_start(&wdt_timer);
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Disable the hardware watchdog.
+ *
+ * Unregisters the early-warning callback and disables the WDT peripheral.
+ */
 void bms_wdt_deinit(void)
 {
   struct wdt_conf config_wdt;
@@ -81,9 +88,11 @@ void bms_wdt_deinit(void)
   wdt_set_config(&config_wdt);
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Periodic watchdog kick — call from the main loop.
+ *
+ * Resets the WDT counter every WDT_TIMER_MS milliseconds.
+ */
 void bms_wdt_mainloop(void)
 {
   if(true == sw_timer_is_elapsed(&wdt_timer, WDT_TIMER_MS))
@@ -96,9 +105,13 @@ void bms_wdt_mainloop(void)
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+
+/**
+ * @brief WDT early-warning interrupt callback.
+ *
+ * Disables both charge and discharge FETs as a safety measure
+ * before the watchdog resets the MCU.
+ */
 static void bms_wdt_early_warning_callback(void)
 {
   bq7693_disable_charge();

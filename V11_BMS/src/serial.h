@@ -32,6 +32,7 @@
   DECLARATION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 extern void serial_init(void);
+extern bool serial_rx_byte(uint8_t *ch);
 extern void serial_send(uint8_t* buff_ptr, uint8_t buff_size);
 
 /*-----------------------------------------------------------------------------
