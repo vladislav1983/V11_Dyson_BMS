@@ -66,14 +66,12 @@ bool serial_rx_byte(uint8_t *ch)
 
   /* Clear any UART errors to avoid blocking reception */
   if (hw->STATUS.reg & (SERCOM_USART_STATUS_FERR |
-                         SERCOM_USART_STATUS_PERR |
-                         SERCOM_USART_STATUS_BUFOVF))
+                        SERCOM_USART_STATUS_PERR |
+                        SERCOM_USART_STATUS_BUFOVF))
   {
     hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
                      SERCOM_USART_STATUS_PERR |
                      SERCOM_USART_STATUS_BUFOVF;
-    (void)hw->DATA.reg;  /* discard garbled byte, clears RXC */
-    return false;
   }
 
   if (!(hw->INTFLAG.reg & SERCOM_USART_INTFLAG_RXC))
