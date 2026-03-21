@@ -89,12 +89,28 @@ bool serial_rx_byte(uint8_t *ch)
  */
 void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
 {
+  SercomUsart *const hw = &(usart_instance.hw->USART);
+
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_RX);
+
+  /* Flush stale RX data and errors before switching to TX */
+  hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
+                   SERCOM_USART_STATUS_PERR |
+                   SERCOM_USART_STATUS_BUFOVF;
+  if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_RXC)
+    (void)hw->DATA.reg;
+
   usart_enable_transceiver(&usart_instance, USART_TRANSCEIVER_TX);
-
   usart_write_buffer_wait(&usart_instance, buff_ptr, buff_size);
-
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_TX);
+
+  /* Clear errors/noise from the TX period before re-enabling RX */
+  hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
+                   SERCOM_USART_STATUS_PERR |
+                   SERCOM_USART_STATUS_BUFOVF;
+  if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_RXC)
+    (void)hw->DATA.reg;
+
   usart_enable_transceiver(&usart_instance, USART_TRANSCEIVER_RX);
 }
 

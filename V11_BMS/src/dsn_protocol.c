@@ -83,6 +83,7 @@
 // Protocol timing
 #define TX_WAIT_TICKS           (10 / SW_TIMER_TICK_MS)
 #define SESSION_TIMEOUT_MS      2000
+#define RX_TIMEOUT_MS           5      
 
 // TLV pair IDs used in analyze_frame response logic
 #define PAIR_TLV_READ           0x1002
@@ -156,6 +157,7 @@ static uint8_t    tx_length;
 static dsn_state_t dsn_state;
 static sw_timer    wait_timer;
 static sw_timer    session_timer;
+static sw_timer    rx_timer;
 
 static bool        trigger_state;
 static bool        sleep_flag;
@@ -259,7 +261,17 @@ void dsn_prot_mainloop(void)
     case DSN_WAIT_FRAME:
     {
       uint8_t ch;
-      while (serial_rx_byte(&ch))
+
+      // arrives within RX_TIMEOUT_MS, discard and re-sync.
+      if (rx_state == RX_RECEIVING && rx_level > 0 &&
+          sw_timer_is_elapsed(&rx_timer, RX_TIMEOUT_MS))
+      {
+        rx_level = 0;
+        rx_state = RX_RECEIVING;
+      }
+
+      // Drain all available UART bytes
+      while(serial_rx_byte(&ch))
       {
         if (rx_byte_handler(ch) && rx_level > 0)
         {
@@ -278,9 +290,15 @@ void dsn_prot_mainloop(void)
 
     //------------------------------------------------------------------------
     case DSN_WAIT_TX:
+    {
+      uint8_t ch;
+      while (serial_rx_byte(&ch))
+        rx_byte_handler(ch);
+
       if (sw_timer_is_elapsed(&wait_timer, TX_WAIT_TICKS))
         dsn_state = DSN_TX_FRAME;
       break;
+    }
 
     //------------------------------------------------------------------------
     case DSN_TX_FRAME:
@@ -334,6 +352,9 @@ static bool rx_byte_handler(uint8_t ch)
     rx_state = RX_COMPLETE;
     return true;
   }
+
+  if (rx_level == 0)
+    sw_timer_start(&rx_timer);
 
   rx_buf[rx_level++] = ch;
   return false;
