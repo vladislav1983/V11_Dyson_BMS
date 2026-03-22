@@ -637,12 +637,10 @@ static bool bms_is_pack_full(void)
 {
   uint16_t *cell_voltages = bq7693_get_cell_voltages();
 
-  // Use hysteresis: when charging, trip at CELL_FULL_CHARGE_VOLTAGE.
-  // When already full (not charging), only consider "not full" once
-  // cells drop below CELL_FULL_CHARGE_RELEASE_VOLTAGE.
-  uint16_t threshold = (bms_state == BMS_CHARGING)
-    ? CELL_FULL_CHARGE_VOLTAGE
-    : CELL_FULL_CHARGE_RELEASE_VOLTAGE;
+  // Use hysteresis: only apply the lower release threshold when already in NOT_CHARGING state
+  uint16_t threshold = (bms_state == BMS_CHARGER_CONNECTED_NOT_CHARGING)
+                     ? CELL_FULL_CHARGE_RELEASE_VOLTAGE // 4100mV
+                     : CELL_FULL_CHARGE_VOLTAGE;        // 4170mV
 
   for (int i=0; i<7; ++i)
   {
@@ -1024,18 +1022,24 @@ static void bms_handle_charging(void)
 
       bms_state = BMS_CHARGER_CONNECTED_NOT_CHARGING;
 
-      // Learn capacity only from full 0->100% cycles
       if (full_discharge_seen)
       {
+        // assign total capacity to currrent charge level if we ar eseen full charge
         eeprom_data.total_pack_capacity = (eeprom_data.total_pack_capacity + eeprom_data.current_charge_level) / 2;
-
-        if (eeprom_data.total_pack_capacity > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH)
-          eeprom_data.total_pack_capacity = (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH;
-
         full_discharge_seen = false;
       }
+      else if (eeprom_data.current_charge_level < eeprom_data.total_pack_capacity)
+      {
+        // filtration if total_pack_capacity, slow decay to total capacity
+        int32_t gap = eeprom_data.total_pack_capacity - eeprom_data.current_charge_level;
+        eeprom_data.total_pack_capacity -= gap >> 3;
+      }
 
-      // Endpoint recalibration: anchor counter to known full state
+      // Clamp to upper bound
+      if (eeprom_data.total_pack_capacity > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH)
+        eeprom_data.total_pack_capacity = (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH;
+
+      // we are full
       eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
 
       BMS_PRINT("BMS:CHARGING Stopped\r\n");
