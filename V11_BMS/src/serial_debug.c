@@ -125,8 +125,16 @@ void serial_debug_process(void)
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
   if (queue_tail != queue_head)
   {
-    usart_write_buffer_wait(&debug_usart, (const uint8_t*)&debug_queue[queue_tail], 1);
-    queue_tail = (queue_tail + 1) % DEBUG_QUEUE_SIZE;
+    SercomUsart *const hw = &(debug_usart.hw->USART);
+    
+    /* Check if USART is ready for new data */
+    if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_DRE) 
+    {
+      /* Write data to USART module */
+      hw->DATA.reg = (uint8_t)debug_queue[queue_tail];
+      /* Update read index */
+      queue_tail   = (queue_tail + 1) % DEBUG_QUEUE_SIZE;
+    }
   }
 #endif
 }
