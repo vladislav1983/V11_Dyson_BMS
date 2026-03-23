@@ -64,6 +64,12 @@ static int32_t current_mA = 0;
 static int32_t current_filt_sum_mA = 0;
 static int32_t current_filt_mA = 0;
 
+static uint16_t min_cell_mv = 0;
+static uint16_t max_cell_mv = 0;
+static uint16_t pack_voltage_mv = 0;
+static uint16_t min_pack_voltage_mv = UINT16_MAX;
+static uint16_t max_pack_voltage_mv = 0;
+
 static uint16_t charge_pause_counter = 0;
 static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
@@ -261,6 +267,40 @@ uint32_t bms_get_runtime_seconds(void)
   return (uint32_t)runtime;
 }
 
+/** @brief Read cell voltages from BQ7693 and update min/max/pack voltage. */
+void bms_update_voltages(void)
+{
+  uint16_t *cell_voltages = bq7693_get_cell_voltages();
+  uint16_t min_v = cell_voltages[0];
+  uint16_t max_v = cell_voltages[0];
+  uint32_t sum = cell_voltages[0];
+
+  for (int i = 1; i < 7; ++i)
+  {
+    if (cell_voltages[i] < min_v) min_v = cell_voltages[i];
+    if (cell_voltages[i] > max_v) max_v = cell_voltages[i];
+    sum += cell_voltages[i];
+  }
+
+  min_cell_mv = min_v;
+  max_cell_mv = max_v;
+  pack_voltage_mv = (uint16_t)sum;
+
+  if (pack_voltage_mv < min_pack_voltage_mv) min_pack_voltage_mv = pack_voltage_mv;
+  if (pack_voltage_mv > max_pack_voltage_mv) max_pack_voltage_mv = pack_voltage_mv;
+}
+
+/** @brief Get lowest individual cell voltage from last update. @return mV */
+uint16_t bms_get_min_cell_mv(void)        { return min_cell_mv; }
+/** @brief Get highest individual cell voltage from last update. @return mV */
+uint16_t bms_get_max_cell_mv(void)        { return max_cell_mv; }
+/** @brief Get current pack voltage (sum of all cells) from last update. @return mV */
+uint16_t bms_get_pack_voltage_mv(void)    { return pack_voltage_mv; }
+/** @brief Get lowest pack voltage recorded since power-on. @return mV */
+uint16_t bms_get_min_pack_voltage_mv(void) { return min_pack_voltage_mv; }
+/** @brief Get highest pack voltage recorded since power-on. @return mV */
+uint16_t bms_get_max_pack_voltage_mv(void) { return max_pack_voltage_mv; }
+
 /** @brief Main BMS state machine loop (never returns). */
 void bms_mainloop(void)
 {
@@ -331,6 +371,7 @@ void bms_mainloop(void)
       break;
     }
 
+    bms_update_voltages();
     dio_mainloop();
     dsn_prot_mainloop();
     bms_interrupt_process();
@@ -689,6 +730,7 @@ static void bms_handle_idle(void)
       sw_timer_stop(&bms_timer); // go to sleep requested by cleaner
     }
 
+    bms_update_voltages();
     sw_timer_delay_ms(50);
 
   } while (false == sw_timer_is_elapsed(&bms_timer, sleep_time));
@@ -776,11 +818,12 @@ static void bms_handle_discharging(void)
 #ifdef SERIAL_DEBUG
     if(++debug_print_cnt > 5)
     {
-      BMS_PRINT("BMS:DISCHARGING I:%d mA @ %ld mAH, C:%ld mAH, T:%d'C\r\n", abs(current_filt_mA), (eeprom_data.current_charge_level / 1000), (eeprom_data.total_pack_capacity / 1000), (int16_t)(pack_temperature / 10));
+      BMS_PRINT("BMS:DISCHARGING I:%d mA @ %ld mAH, C:%ld mAH, T:%d 'C, P:%d mV\r\n", abs(current_filt_mA), (eeprom_data.current_charge_level / 1000), (eeprom_data.total_pack_capacity / 1000), (int16_t)(pack_temperature / 10), pack_voltage_mv);
       debug_print_cnt = 0;
     }
 #endif
 
+    bms_update_voltages();
     sw_timer_delay_ms(60);
   }
 }
@@ -1004,7 +1047,7 @@ static void bms_handle_charging(void)
 #ifdef SERIAL_DEBUG
       if(++debug_print_cnt > 5)
       {
-        BMS_PRINT("BMS:CHARGING I:%d mA @ %ld mAH, C:%ld mAH, T:%d'C\r\n", abs(current_filt_mA), (eeprom_data.current_charge_level / 1000), (eeprom_data.total_pack_capacity / 1000), (int16_t)(pack_temperature / 10));
+        BMS_PRINT("BMS:CHARGING I:%d mA @ %ld mAH, C:%ld mAH, T:%d 'C, P:%d mV\r\n", abs(current_filt_mA), (eeprom_data.current_charge_level / 1000), (eeprom_data.total_pack_capacity / 1000), (int16_t)(pack_temperature / 10), pack_voltage_mv);
         debug_print_cnt = 0;
       }
 #endif
@@ -1048,6 +1091,7 @@ static void bms_handle_charging(void)
       return;
     }
 
+    bms_update_voltages();
     sw_timer_delay_ms(50);
   }
 }

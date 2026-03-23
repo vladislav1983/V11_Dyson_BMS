@@ -75,6 +75,12 @@ enum BMS_ERROR_CODE
  extern void bms_wakeup_interrupt_callback(void);
  extern void bms_interrupt_callback(void) ;
  extern void bms_interrupt_process(void);
+ extern void bms_update_voltages(void);
+ extern uint16_t bms_get_min_cell_mv(void);
+ extern uint16_t bms_get_max_cell_mv(void);
+ extern uint16_t bms_get_pack_voltage_mv(void);
+ extern uint16_t bms_get_min_pack_voltage_mv(void);
+ extern uint16_t bms_get_max_pack_voltage_mv(void);
 
 /*-----------------------------------------------------------------------------
   END OF MODULE DEFINITION FOR MULTIPLE INCLUSION

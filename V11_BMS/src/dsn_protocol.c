@@ -67,7 +67,7 @@
 #define OFF_SRC                 5
 #define OFF_CLASS               6
 #define OFF_PAYLOAD             7
-#define FRAME_HDR_OVERHEAD      4      // bytes before DIR: delim + size_lo + size_hi + hdr_crc8
+#define FRAME_HDR_OVERHEAD      4      // in-frame header (DIR+MARKER+SRC+CLASS) = CRC32 size
 
 // Byte stuffing
 #define STUFF_ESCAPE            0xDB
@@ -90,9 +90,9 @@
 
 // Buffer sizes
 #define RX_BUF_SIZE             80
-#define TX_BUF_SIZE             80
-#define MAX_RESPONSE_FRAME      65     // max response frame (SIZE+3)
-#define MAX_RESPONSE_PAYLOAD    52     // max payload bytes in response
+#define TX_BUF_SIZE             96
+#define MAX_RESPONSE_FRAME      80     // max response frame (SIZE+3)
+#define MAX_RESPONSE_PAYLOAD    65     // max payload bytes in response
 
 // Protocol timing
 #define TX_WAIT_TICKS           (10 / SW_TIMER_TICK_MS)
@@ -118,12 +118,23 @@
 #define TLV_RUNTIME             0x2202   // 4 bytes: seconds (aliased from 0x22)
 #define TLV_SOC2                0x8105   // 2 bytes: filtered SOC percent * 100
 #define TLV_BMS_STATUS          0x8106   // 1 byte: status enum
-#define TLV_MAX_CELL_V          0x250B   // 2 bytes: mV
-#define TLV_MIN_CELL_V          0x250C   // 2 bytes: mV
-#define TLV_MIN_PACK_V          0x8114   // 2 bytes: mV
+#define TLV_MAX_CELL_V          0x250B   // 2 bytes: max pack cell mV
+#define TLV_MIN_CELL_V          0x250C   // 2 bytes: min pack cell mV
+#define TLV_MIN_PACK_V          0x8114   // 2 bytes: min pack voltage mV
+#define TLV_MAX_PACK_V          0x8115   // 2 bytes: max pack voltage mV
 #define TLV_BATTERY_TYPE        0x8102   // 2 bytes: battery type ID
 #define TLV_FULL_CHARGE_CAP     0x0201   // 4 bytes: capacity in 0.01 mAh
-#define TLV_MAX_PACK_V          0x8115   // 2 bytes: max pack voltage mV
+
+
+// V11 screw extended TLV register keys
+#define TLV_V11_SCREW_TRIGGER       0x1100   // 1 byte: trigger state (mirrors 0x8100)
+#define TLV_V11_SCREW_MODE          0x8010   // 1 byte: constant 0x02
+#define TLV_V11_SCREW_8001          0x8001   // 1 byte: 0x00
+#define TLV_V11_SCREW_8002          0x8002   // 1 byte: 0x00
+#define TLV_V11_SCREW_8005          0x8005   // 1 byte: 0x00
+#define TLV_V11_SCREW_8006          0x8006   // 1 byte: 0x00
+#define TLV_V11_SCREW_8008          0x8008   // 1 byte: 0x00
+#define TLV_V11_SCREW_8108          0x8108   // 2 bytes: 0x0000
 
 // Handshake configuration
 #define HANDSHAKE_NUM_CELLS     7
@@ -204,7 +215,6 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class);
 static bool     dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, uint16_t *out_len);
 static bool     dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len);
 static void     build_trigger_response(uint8_t *out_data, uint16_t *out_len);
-static bool     process_v11_screw_frame(void);
 static void     handle_sleep(void);
 
 //-----------------------------------------------------------------------------
@@ -540,19 +550,16 @@ static bool process_rx_frame(void)
   // Check frame length matches SIZE field
   size = LE16TOH(&rx_buf[OFF_SIZE_LO]);
 
-  if (rx_level != (uint8_t)(size + OFF_DIR))
+  if (size < 8 || rx_level != (size + OFF_DIR))
     return false;
 
   // Verify CRC32
   if (!frame_verify_crc32(rx_buf))
     return false;
 
-  // Route screw-type frames (SRC=0x02) to dedicated handler
-  if (rx_buf[OFF_SRC] == V11_SCREW_SRC)
-    return process_v11_screw_frame();
-
-  // Reject if SRC != 0x01 (discovery broadcasts have SRC=0xFF)
-  if (rx_buf[OFF_SRC] != 0x01)
+  // Accept SRC=0x01 (standard data), SRC=0x02 (V11 screw ext probe), and SRC=0x03 (V11 screw extended control).
+  // Reject discovery broadcasts (SRC=0xFF) and other unknown sources.
+  if (rx_buf[OFF_SRC] != 0x01 && rx_buf[OFF_SRC] != 0x02 && rx_buf[OFF_SRC] != 0x03)
     return false;
 
   // Reset session timer on any valid frame addressed to us
@@ -629,8 +636,8 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
   if (ctx->in_remaining == 0)
     return 0;
 
-  // Copy the first byte (sub-protocol marker / command byte) to output
-  if (ctx->out_remaining > 0 && ctx->in_remaining > 0)
+  // Copy rolling counter to output
+  if (ctx->out_remaining > 0)
   {
     *ctx->out_ptr = *ctx->in_ptr;
     ctx->out_ptr++;
@@ -745,7 +752,7 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
 
       val_len = 0;
       if (!dispatch_tlv_read(key, val_buf, &val_len))
-        return false;
+        return true;   // unknown register — skip 
 
       HTOLE16(&out_data[2], val_len);
       memcpy(&out_data[4], val_buf, val_len);
@@ -768,6 +775,25 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
 
       build_trigger_response(out_data, out_len);
       return true;
+    //---------------------------------------------------------------------------------------------
+    // V11 SCREW ACK: [0x00 0x08] -> [0x01 0x08] [0x00 0x00 0x00]
+    // Extended control ack — consumes 0 input bytes, returns 3 zero bytes
+    case 0x0800:
+      out_data[0] = 0x00;
+      out_data[1] = 0x00;
+      out_data[2] = 0x00;
+      *out_len = 3;
+      return true;
+
+    //---------------------------------------------------------------------------------------------
+    // V11 SCREW DISCOVERY/INIT: [0x00 0x20] [DATA...] no response data
+    // Consumes all remaining input bytes in this pair
+    case 0x2000:
+      in_ctx->in_ptr       += in_ctx->in_remaining;
+      in_ctx->in_remaining  = 0;
+      *out_len = 0;
+      return true;
+
   //---------------------------------------------------------------------------------------------
     default:
       return false;
@@ -805,6 +831,29 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
       *out_len = 1;
       return true;
 
+    case TLV_V11_SCREW_TRIGGER:  // 0x1100: V11 screw trigger state
+      out_data[0] = trigger_state ? 1 : 0;
+      *out_len = 1;
+      return true;
+
+    case TLV_V11_SCREW_MODE:  // 0x8010: V11 screw mode constant
+      out_data[0] = 0x02;
+      *out_len = 1;
+      return true;
+
+    case TLV_V11_SCREW_8001:  // 0x8001: unknown flag (flips 0->1 independently)
+      out_data[0] = 0x00;
+      *out_len = 1;
+      return true;
+
+    case TLV_V11_SCREW_8002:  // 0x8002
+    case TLV_V11_SCREW_8005:  // 0x8005
+    case TLV_V11_SCREW_8006:  // 0x8006
+    case TLV_V11_SCREW_8008:  // 0x8008
+      out_data[0] = 0x00;
+      *out_len = 1;
+      return true;
+
     //--- 2-byte registers ---
 
     case TLV_SOC:  // 0x250D: SOC in percent * 100
@@ -820,37 +869,42 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
       return true;
 
     case TLV_MAX_CELL_V:  // 0x250B: max cell voltage mV
-      val = HANDSHAKE_NUM_CELLS * HANDSHAKE_MAX_CELL_MV;
+      val = bms_get_max_cell_mv();
       HTOLE16(out_data, val);
       *out_len = 2;
       return true;
 
     case TLV_MIN_CELL_V:  // 0x250C: min cell voltage mV
-      val = HANDSHAKE_NUM_CELLS * HANDSHAKE_MIN_CELL_MV;
+      val = bms_get_min_cell_mv();
       HTOLE16(out_data, val);
       *out_len = 2;
       return true;
 
     case TLV_MIN_PACK_V:  // 0x8114: min pack voltage mV
-      val = HANDSHAKE_NUM_CELLS * HANDSHAKE_MIN_CELL_MV;
+      val = bms_get_min_pack_voltage_mv();
       HTOLE16(out_data, val);
       *out_len = 2;
       return true;
 
+    case TLV_MAX_PACK_V:  // 0x8115: max pack voltage mV
+      val = bms_get_max_pack_voltage_mv();
+      HTOLE16(out_data, val);
+      *out_len = 2;
+      return true;
+      
     case TLV_BATTERY_TYPE:  // 0x8102: battery type ID
       val = V11_BATTERY_TYPE;
       HTOLE16(out_data, val);
       *out_len = 2;
       return true;
 
-    case TLV_MAX_PACK_V:  // 0x8115: max pack voltage mV
-      val = HANDSHAKE_NUM_CELLS * HANDSHAKE_MAX_CELL_MV;
-      HTOLE16(out_data, val);
+    case TLV_V11_SCREW_8108:  // 0x8108: V11 screw 2-byte status
+      out_data[0] = 0x00;
+      out_data[1] = 0x00;
       *out_len = 2;
       return true;
 
     //--- 4-byte registers ---
-
     case TLV_RUNTIME:  // 0x2202: runtime in seconds
       val32 = bms_get_runtime_seconds();
       HTOLE32(out_data, val32);
@@ -893,197 +947,6 @@ static void build_trigger_response(uint8_t *out_data, uint16_t *out_len)
   out_data[4] = 0x00;
   out_data[5] = 0x00;
   *out_len = 6;
-}
-
-//-----------------------------------------------------------------------------
-//    V11 SCREW-TYPE PROTOCOL (SRC=0x02 VARIANT)
-//-----------------------------------------------------------------------------
-
-/**
- * @brief  Append one TLV 0x1001 entry to a buffer.
- *
- * Format: [0x01] [0x10] [REG] [TYPE] [LEN_LO] [0x00] [DATA...]
- *
- * @param  buf     Output buffer pointer (advanced on return).
- * @param  reg     Register byte.
- * @param  type    Type byte.
- * @param  data    Pointer to value data.
- * @param  len     Value length in bytes (1, 2, or 4).
- * @return Bytes written.
- */
-static uint8_t v11_screw_compose_tlv(uint8_t *buf, uint8_t reg, uint8_t type, const uint8_t *data, uint8_t len)
-{
-  buf[0] = 0x01;           // pair 0x1001 low byte
-  buf[1] = 0x10;           // pair 0x1001 high byte
-  buf[2] = reg;
-  buf[3] = type;
-  buf[4] = len;            // LEN_LO
-  buf[5] = 0x00;           // LEN_HI (always 0 for small values)
-  memcpy(&buf[6], data, len);
-  return 6 + len;
-}
-
-/**
- * @brief  Process a V11 screw-type frame (SRC=0x02).
- *
- * Publish/publish model — no request/response 
- *   - Handshake (pair 0x0001): send payload back
- *   - Vacuum publishes TLV state (pair 0x0801 + 0x1001 entries):
- *     BMS reads and stores vacuum's TLV values (trigger key 0x1100),
- *     then publishes its own TLV state (0x1001 entries only).
- *
- * @return true if response built in tx_buf.
- */
-static bool process_v11_screw_frame(void)
-{
-  uint16_t size;
-  uint16_t payload_len;
-  const uint8_t *payload;
-  uint8_t  counter;
-  uint16_t first_pair;
-  uint16_t pos;
-  uint8_t  *out;
-  uint16_t resp_size;
-  uint8_t  val8;
-  uint16_t val16;
-  uint32_t val32;
-  uint8_t  soc_buf[2];
-  uint8_t  rt_buf[4];
-  uint16_t pair;
-  uint8_t  reg, type;
-  uint16_t val_len, key;
-  uint16_t resp_payload_len;
-
-  // Reset session timer on any valid screw frame
-  sw_timer_start(&session_timer);
-  if (!vacuum_connected)
-    DSN_PRINT("HS\r\n");
-  vacuum_connected = true;
-
-  size = LE16TOH(&rx_buf[OFF_SIZE_LO]);
-  payload_len = size - 4 - 4;  // subtract header (DIR+MARKER+SRC+CLASS) and CRC32
-  payload = &rx_buf[OFF_PAYLOAD];
-
-  if (payload_len < 3)
-    return false;
-
-  counter    = payload[0];
-  first_pair = LE16TOH(&payload[1]);
-
-  //--------------------------------------------------------------------
-  // Handshake: pair 0x0001 — mirror payload with DIR=0x01, CLASS=0x01
-  //--------------------------------------------------------------------
-  if (first_pair == V11_SCREW_HANDSHAKE_PAIR)
-  {
-    tx_buf[OFF_DIR]    = FRAME_DIR_DATA;       // 0x01
-    tx_buf[OFF_MARKER] = FRAME_MARKER;         // 0xC0
-    tx_buf[OFF_SRC]    = V11_SCREW_SRC;            // 0x02
-    tx_buf[OFF_CLASS]  = FRAME_CLASS_RESPONSE; // 0x01
-
-    // Mirror the payload
-    memcpy(&tx_buf[OFF_PAYLOAD], payload, payload_len);
-
-    resp_size = payload_len + 4 + 4;  // payload + header + CRC32
-    HTOLE16(&tx_buf[OFF_SIZE_LO], resp_size);
-    tx_buf[OFF_HDR_CRC8] = frame_compute_hdr_crc8(tx_buf);
-    frame_append_crc32(tx_buf);
-
-    tx_length = frame_stuff(tx_buf, (uint8_t)(resp_size + OFF_DIR), TX_BUF_SIZE);
-    return (tx_length > 0);
-  }
-
-  //--------------------------------------------------------------------
-  // Vacuum publish: read vacuum's TLV state, then publish BMS state
-  //--------------------------------------------------------------------
-  if (first_pair != V11_SCREW_DATA_PAIR)
-    return false;
-
-  // Parse request payload: skip counter (1) + pair ID (2) already read
-  pos = 3;
-
-  // Consume pair 0x0801 data (3 bytes)
-  if (pos + V11_SCREW_DATA_PAIR_LEN > payload_len)
-    return false;
-  pos += V11_SCREW_DATA_PAIR_LEN;
-
-  // Read vacuum's published TLV values — store trigger state (key 0x1100)
-  while (pos + 2 <= payload_len)
-  {
-    pair = LE16TOH(&payload[pos]);
-    pos += 2;
-
-    if (pair != V11_SCREW_TLV_PAIR)
-      break;
-
-    // Parse TLV_READ_RES format: REG, TYPE, LEN_LO, LEN_HI, DATA[LEN]
-    if (pos + 4 > payload_len)
-      break;
-
-    reg     = payload[pos];
-    type    = payload[pos + 1];
-    val_len = LE16TOH(&payload[pos + 2]);
-    pos += 4;
-
-    if (pos + val_len > payload_len)
-      break;
-
-    key = ((uint16_t)type << 8) | reg;
-    if (key == V11_SCREW_TRIGGER_KEY && val_len >= 1)
-    {
-      // Vacuum's trigger state — update the BMS trigger from protocol
-      dsn_prot_set_trigger(payload[pos] != 0);
-    }
-
-    pos += val_len;
-  }
-
-  //--------------------------------------------------------------------
-  // Publish BMS state: 6 TLV entries, counter = vacuum counter - 1
-  //--------------------------------------------------------------------
-  tx_buf[OFF_DIR]    = FRAME_DIR_DATA;
-  tx_buf[OFF_MARKER] = FRAME_MARKER;
-  tx_buf[OFF_SRC]    = V11_SCREW_SRC;
-  tx_buf[OFF_CLASS]  = FRAME_CLASS_RESPONSE;
-
-  out = &tx_buf[OFF_PAYLOAD];
-
-  // Counter: request_counter - 1
-  *out++ = (counter > 0) ? (counter - 1) : 0;
-
-  // 1. Trigger state (key 0x8100, 1 byte)
-  val8 = trigger_state ? 1 : 0;
-  out += v11_screw_compose_tlv(out, 0x00, 0x81, &val8, 1);
-
-  // 2. Charger connected (key 0x2101, 1 byte)
-  val8 = dio_read(DIO_CHARGER_CONNECTED) ? 1 : 0;
-  out += v11_screw_compose_tlv(out, 0x01, 0x21, &val8, 1);
-
-  // 3. SOC percent * 100 (key 0x250D, 2 bytes LE)
-  val16 = bms_get_soc_x100();
-  HTOLE16(soc_buf, val16);
-  out += v11_screw_compose_tlv(out, 0x0D, 0x25, soc_buf, 2);
-
-  // 4. Runtime seconds (key 0x2202, 4 bytes LE)
-  val32 = bms_get_runtime_seconds();
-  HTOLE32(rt_buf, val32);
-  out += v11_screw_compose_tlv(out, 0x02, 0x22, rt_buf, 4);
-
-  // 5. Filtered SOC percent * 100 (key 0x8105, 2 bytes LE)
-  out += v11_screw_compose_tlv(out, 0x05, 0x81, soc_buf, 2);
-
-  // 6. BMS status (key 0x8106, 1 byte) — 0x01 = OK
-  val8 = 0x01;
-  out += v11_screw_compose_tlv(out, 0x06, 0x81, &val8, 1);
-
-  // Compute frame size and CRC
-  resp_payload_len = (uint16_t)(out - &tx_buf[OFF_PAYLOAD]);
-  resp_size = resp_payload_len + 4 + 4;
-  HTOLE16(&tx_buf[OFF_SIZE_LO], resp_size);
-  tx_buf[OFF_HDR_CRC8] = frame_compute_hdr_crc8(tx_buf);
-  frame_append_crc32(tx_buf);
-
-  tx_length = frame_stuff(tx_buf, (uint8_t)(resp_size + OFF_DIR), TX_BUF_SIZE);
-  return (tx_length > 0);
 }
 
 /**
