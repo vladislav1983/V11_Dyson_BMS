@@ -103,14 +103,6 @@
 #define PAIR_TLV_READ           0x1002
 #define PAIR_TLV_READ_RES       0x1001
 
-// V11 screw-type protocol (SRC=0x02 variant)
-#define V11_SCREW_SRC               0x02
-#define V11_SCREW_HANDSHAKE_PAIR    0x0001
-#define V11_SCREW_DATA_PAIR         0x0801
-#define V11_SCREW_TLV_PAIR          0x1001
-#define V11_SCREW_TRIGGER_KEY       0x1100   // vacuum sends trigger state here
-#define V11_SCREW_DATA_PAIR_LEN     3        // pair 0x0801 always carries 3 bytes
-
 // TLV register keys: (TYPE << 8) | REG
 #define TLV_TRIGGER_STATE       0x8100   // 1 byte: trigger on/off
 #define TLV_CHARGER_CONNECTED   0x2101   // 1 byte: charger bool
@@ -124,17 +116,6 @@
 #define TLV_MAX_PACK_V          0x8115   // 2 bytes: max pack voltage mV
 #define TLV_BATTERY_TYPE        0x8102   // 2 bytes: battery type ID
 #define TLV_FULL_CHARGE_CAP     0x0201   // 4 bytes: capacity in 0.01 mAh
-
-
-// V11 screw extended TLV register keys
-#define TLV_V11_SCREW_TRIGGER       0x1100   // 1 byte: trigger state (mirrors 0x8100)
-#define TLV_V11_SCREW_MODE          0x8010   // 1 byte: constant 0x02
-#define TLV_V11_SCREW_8001          0x8001   // 1 byte: 0x00
-#define TLV_V11_SCREW_8002          0x8002   // 1 byte: 0x00
-#define TLV_V11_SCREW_8005          0x8005   // 1 byte: 0x00
-#define TLV_V11_SCREW_8006          0x8006   // 1 byte: 0x00
-#define TLV_V11_SCREW_8008          0x8008   // 1 byte: 0x00
-#define TLV_V11_SCREW_8108          0x8108   // 2 bytes: 0x0000
 
 // Handshake configuration
 #define HANDSHAKE_NUM_CELLS     7
@@ -560,9 +541,9 @@ static bool process_rx_frame(void)
   if (!frame_verify_crc32(rx_buf))
     return false;
 
-  // Accept SRC=0x01 (standard data), SRC=0x02 (V11 screw ext probe), and SRC=0x03 (V11 screw extended control).
+  // Accept SRC=0x01 (standard data) only.
   // Reject discovery broadcasts (SRC=0xFF) and other unknown sources.
-  if (rx_buf[OFF_SRC] != 0x01 && rx_buf[OFF_SRC] != 0x02 && rx_buf[OFF_SRC] != 0x03)
+  if (rx_buf[OFF_SRC] != 0x01)
     return false;
 
   // Reset session timer on any valid frame addressed to us
@@ -778,24 +759,6 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
 
       build_trigger_response(out_data, out_len);
       return true;
-    //---------------------------------------------------------------------------------------------
-    // V11 SCREW ACK: [0x00 0x08] -> [0x01 0x08] [0x00 0x00 0x00]
-    // Extended control ack — consumes 0 input bytes, returns 3 zero bytes
-    case 0x0800:
-      out_data[0] = 0x00;
-      out_data[1] = 0x00;
-      out_data[2] = 0x00;
-      *out_len = 3;
-      return true;
-
-    //---------------------------------------------------------------------------------------------
-    // V11 SCREW DISCOVERY/INIT: [0x00 0x20] [DATA...] no response data
-    // Consumes all remaining input bytes in this pair
-    case 0x2000:
-      in_ctx->in_ptr       += in_ctx->in_remaining;
-      in_ctx->in_remaining  = 0;
-      *out_len = 0;
-      return true;
 
   //---------------------------------------------------------------------------------------------
     default:
@@ -831,29 +794,6 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
 
     case TLV_BMS_STATUS:  // 0x8106: BMS status byte
       out_data[0] = 0x01;  // 1 = OK
-      *out_len = 1;
-      return true;
-
-    case TLV_V11_SCREW_TRIGGER:  // 0x1100: V11 screw trigger state
-      out_data[0] = trigger_state ? 1 : 0;
-      *out_len = 1;
-      return true;
-
-    case TLV_V11_SCREW_MODE:  // 0x8010: V11 screw mode constant
-      out_data[0] = 0x02;
-      *out_len = 1;
-      return true;
-
-    case TLV_V11_SCREW_8001:  // 0x8001: unknown flag (flips 0->1 independently)
-      out_data[0] = 0x00;
-      *out_len = 1;
-      return true;
-
-    case TLV_V11_SCREW_8002:  // 0x8002
-    case TLV_V11_SCREW_8005:  // 0x8005
-    case TLV_V11_SCREW_8006:  // 0x8006
-    case TLV_V11_SCREW_8008:  // 0x8008
-      out_data[0] = 0x00;
       *out_len = 1;
       return true;
 
@@ -894,12 +834,6 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
     case TLV_BATTERY_TYPE:  // 0x8102: battery type ID
       val = V11_BATTERY_TYPE;
       HTOLE16(out_data, val);
-      *out_len = 2;
-      return true;
-
-    case TLV_V11_SCREW_8108:  // 0x8108: V11 screw 2-byte status
-      out_data[0] = 0x00;
-      out_data[1] = 0x00;
       *out_len = 2;
       return true;
 
