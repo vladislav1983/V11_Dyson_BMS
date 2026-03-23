@@ -13,9 +13,52 @@
 #include "serial.h"
 
 /*-----------------------------------------------------------------------------
+    DEFINITION OF LOCAL MACROS/#DEFINES
+-----------------------------------------------------------------------------*/
+#define SERIAL_RX_BUF_SIZE  64
+#define SERIAL_RX_BUF_MASK  (SERIAL_RX_BUF_SIZE - 1)
+
+/*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL VARIABLES
 -----------------------------------------------------------------------------*/
 struct usart_module usart_instance;
+
+static volatile uint8_t rx_ring[SERIAL_RX_BUF_SIZE];
+static volatile uint8_t rx_ring_head;   // ISR writes here
+static volatile uint8_t rx_ring_tail;   // serial_rx_byte reads here
+
+/*-----------------------------------------------------------------------------
+    DEFINITION OF INTERRUPT HANDLERS
+-----------------------------------------------------------------------------*/
+
+/**
+ * @brief SERCOM2 RX interrupt handler — store received bytes into ring buffer.
+ */
+void SERCOM2_Handler_BMS(void)
+{
+  SercomUsart *const hw = &(SERCOM2->USART);
+
+  if (hw->STATUS.reg & (SERCOM_USART_STATUS_FERR |
+                         SERCOM_USART_STATUS_PERR |
+                         SERCOM_USART_STATUS_BUFOVF))
+  {
+    hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
+                     SERCOM_USART_STATUS_PERR |
+                     SERCOM_USART_STATUS_BUFOVF;
+    // do not discard data
+  }
+
+  if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_RXC)
+  {
+    uint8_t data = (uint8_t)hw->DATA.reg;
+    uint8_t next = (rx_ring_head + 1) & SERIAL_RX_BUF_MASK;
+    if (next != rx_ring_tail)
+    {
+      rx_ring[rx_ring_head] = data;
+      rx_ring_head = next;
+    }
+  }
+}
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
@@ -43,42 +86,47 @@ void serial_init()
   config_usart.character_size = USART_CHARACTER_SIZE_8BIT;
 
   system_pinmux_get_config_defaults(&pin_conf);
-  pin_conf.mux_position = PINMUX_PA15C_SERCOM2_PAD3;
+  pin_conf.mux_position = MUX_PA15C_SERCOM2_PAD3;
   system_pinmux_pin_set_config(PIN_PA15, &pin_conf);
 
   while (usart_init(&usart_instance, SERCOM2, &config_usart) != STATUS_OK) { }
 
   usart_enable(&usart_instance);
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_TX);
+
+  // Enable RXC interrupt for ring buffer reception
+  rx_ring_head = 0;
+  rx_ring_tail = 0;
+  {
+    SercomUsart *const hw = &(usart_instance.hw->USART);
+    hw->INTENSET.reg = SERCOM_USART_INTENSET_RXC;
+  }
+  system_interrupt_enable(SYSTEM_INTERRUPT_MODULE_SERCOM2);
 }
 
 /**
- * @brief Polled UART read with error recovery.
- *
- * Clears framing/parity/overflow errors before checking for data.
+ * @brief Read one byte from the RX ring buffer (filled by SERCOM2 ISR).
  *
  * @param ch  Pointer to store the received byte.
- * @return    true if a byte was received, false otherwise.
+ * @return    true if a byte was available, false if buffer empty.
  */
 bool serial_rx_byte(uint8_t *ch)
 {
-  SercomUsart *const hw = &(usart_instance.hw->USART);
-
-  /* Clear any UART errors to avoid blocking reception */
-  if (hw->STATUS.reg & (SERCOM_USART_STATUS_FERR |
-                        SERCOM_USART_STATUS_PERR |
-                        SERCOM_USART_STATUS_BUFOVF))
-  {
-    hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
-                     SERCOM_USART_STATUS_PERR |
-                     SERCOM_USART_STATUS_BUFOVF;
-  }
-
-  if (!(hw->INTFLAG.reg & SERCOM_USART_INTFLAG_RXC))
+  if (rx_ring_tail == rx_ring_head)
     return false;
 
-  *ch = (uint8_t)(hw->DATA.reg);
+  *ch = rx_ring[rx_ring_tail];
+  rx_ring_tail = (rx_ring_tail + 1) & SERIAL_RX_BUF_MASK;
   return true;
+}
+
+/**
+ * @brief Check if RX ring buffer has data available.
+ * @return true if one or more bytes are buffered.
+ */
+bool serial_rx_available(void)
+{
+  return (rx_ring_tail != rx_ring_head);
 }
 
 /**
@@ -91,6 +139,8 @@ void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
 {
   SercomUsart *const hw = &(usart_instance.hw->USART);
 
+  /* Disable RX interrupt before switching to TX mode */
+  hw->INTENCLR.reg = SERCOM_USART_INTENCLR_RXC;
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_RX);
 
   /* Flush stale RX data and errors before switching to TX */
@@ -112,6 +162,11 @@ void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
     (void)hw->DATA.reg;
 
   usart_enable_transceiver(&usart_instance, USART_TRANSCEIVER_RX);
+
+  /* Flush ring buffer (TX echoes noise) and re-enable RX interrupt */
+  rx_ring_head = 0;
+  rx_ring_tail = 0;
+  hw->INTENSET.reg = SERCOM_USART_INTENSET_RXC;
 }
 
 /*-----------------------------------------------------------------------------

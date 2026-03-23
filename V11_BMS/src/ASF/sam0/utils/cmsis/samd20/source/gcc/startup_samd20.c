@@ -73,7 +73,7 @@ void NVMCTRL_Handler         ( void ) __attribute__ ((weak, alias("Dummy_Handler
 void EVSYS_Handler           ( void ) __attribute__ ((weak, alias("Dummy_Handler")));
 void SERCOM0_Handler         ( void ) __attribute__ ((weak, alias("Dummy_Handler")));
 void SERCOM1_Handler         ( void ) __attribute__ ((weak, alias("Dummy_Handler")));
-void SERCOM2_Handler         ( void ) __attribute__ ((weak, alias("Dummy_Handler")));
+void SERCOM2_Handler_BMS         ( void ) __attribute__ ((weak, alias("Dummy_Handler")));
 void SERCOM3_Handler         ( void ) __attribute__ ((weak, alias("Dummy_Handler")));
 #ifdef ID_SERCOM4
 void SERCOM4_Handler         ( void ) __attribute__ ((weak, alias("Dummy_Handler")));
@@ -139,7 +139,7 @@ const DeviceVectors exception_table = {
         (void*) EVSYS_Handler,          /*  6 Event System Interface */
         (void*) SERCOM0_Handler,        /*  7 Serial Communication Interface 0 */
         (void*) SERCOM1_Handler,        /*  8 Serial Communication Interface 1 */
-        (void*) SERCOM2_Handler,        /*  9 Serial Communication Interface 2 */
+        (void*) SERCOM2_Handler_BMS,        /*  9 Serial Communication Interface 2 */
         (void*) SERCOM3_Handler,        /* 10 Serial Communication Interface 3 */
 #ifdef ID_SERCOM4
         (void*) SERCOM4_Handler,        /* 11 Serial Communication Interface 4 */

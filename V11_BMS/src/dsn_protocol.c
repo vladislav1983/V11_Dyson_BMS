@@ -114,9 +114,9 @@
 // TLV register keys: (TYPE << 8) | REG
 #define TLV_TRIGGER_STATE       0x8100   // 1 byte: trigger on/off
 #define TLV_CHARGER_CONNECTED   0x2101   // 1 byte: charger bool
-#define TLV_SOC                 0x250D   // 2 bytes: centipercent
+#define TLV_SOC                 0x250D   // 2 bytes: percent * 100
 #define TLV_RUNTIME             0x2202   // 4 bytes: seconds (aliased from 0x22)
-#define TLV_SOC2                0x8105   // 2 bytes: filtered SOC centipercent
+#define TLV_SOC2                0x8105   // 2 bytes: filtered SOC percent * 100
 #define TLV_BMS_STATUS          0x8106   // 1 byte: status enum
 #define TLV_MAX_CELL_V          0x250B   // 2 bytes: mV
 #define TLV_MIN_CELL_V          0x250C   // 2 bytes: mV
@@ -293,7 +293,7 @@ void dsn_prot_mainloop(void)
         rx_state = RX_RECEIVING;
       }
 
-      if(serial_rx_byte(&ch))
+      while (serial_rx_byte(&ch))
       {
         if (rx_byte_handler(ch) && rx_level > 0)
         {
@@ -313,10 +313,6 @@ void dsn_prot_mainloop(void)
     //------------------------------------------------------------------------
     case DSN_WAIT_TX:
     {
-      uint8_t ch;
-      while (serial_rx_byte(&ch))
-        rx_byte_handler(ch);
-
       if (sw_timer_is_elapsed(&wait_timer, TX_WAIT_TICKS))
         dsn_state = DSN_TX_FRAME;
       break;
@@ -811,13 +807,13 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
 
     //--- 2-byte registers ---
 
-    case TLV_SOC:  // 0x250D: SOC in centipercent
+    case TLV_SOC:  // 0x250D: SOC in percent * 100
       soc = bms_get_soc_x100();
       HTOLE16(out_data, soc);
       *out_len = 2;
       return true;
 
-    case TLV_SOC2:  // 0x8105: filtered SOC centipercent
+    case TLV_SOC2:  // 0x8105: filtered SOC percent * 100
       soc = bms_get_soc_x100();
       HTOLE16(out_data, soc);
       *out_len = 2;
@@ -1062,7 +1058,7 @@ static bool process_v11_screw_frame(void)
   val8 = dio_read(DIO_CHARGER_CONNECTED) ? 1 : 0;
   out += v11_screw_compose_tlv(out, 0x01, 0x21, &val8, 1);
 
-  // 3. SOC centipercent (key 0x250D, 2 bytes LE)
+  // 3. SOC percent * 100 (key 0x250D, 2 bytes LE)
   val16 = bms_get_soc_x100();
   HTOLE16(soc_buf, val16);
   out += v11_screw_compose_tlv(out, 0x0D, 0x25, soc_buf, 2);
@@ -1072,7 +1068,7 @@ static bool process_v11_screw_frame(void)
   HTOLE32(rt_buf, val32);
   out += v11_screw_compose_tlv(out, 0x02, 0x22, rt_buf, 4);
 
-  // 5. Filtered SOC centipercent (key 0x8105, 2 bytes LE)
+  // 5. Filtered SOC percent * 100 (key 0x8105, 2 bytes LE)
   out += v11_screw_compose_tlv(out, 0x05, 0x81, soc_buf, 2);
 
   // 6. BMS status (key 0x8106, 1 byte) — 0x01 = OK
