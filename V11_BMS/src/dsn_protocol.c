@@ -198,6 +198,7 @@ static bool        vacuum_connected;
 
 static uint32_t    last_motor_speed;
 static bool        pending_sleep;
+static bool        charger_at_sleep;   // latch charger state when entering DSN_SLEEP
 
 //-----------------------------------------------------------------------------
 //    DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
@@ -246,7 +247,9 @@ void dsn_prot_set_trigger(bool state)
 /** @brief Reset protocol to initial state. */
 void dsn_prot_reset(void)
 {
-  dsn_state = DSN_INIT;
+  dsn_state        = DSN_INIT;
+  sleep_flag       = false;
+  vacuum_connected = false;
 }
 
 /**
@@ -279,7 +282,7 @@ void dsn_prot_mainloop(void)
     //------------------------------------------------------------------------
     case DSN_INIT:
       if (sleep_flag)
-        DSN_PRINT("WAKE\r\n");
+        DSN_PRINT("PROT:WAKE\r\n");
       port_pin_set_output_level(PRECHARGE_PIN, true);
       port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, true);
       rx_level  = 0;
@@ -346,7 +349,7 @@ void dsn_prot_mainloop(void)
     case DSN_SLEEP:
       if (     dio_read(DIO_MODE_BUTTON)
            ||  dio_read(DIO_TRIGGER_PRESSED)
-           || !dio_read(DIO_CHARGER_CONNECTED))
+           || (charger_at_sleep && !dio_read(DIO_CHARGER_CONNECTED)))
       {
         dsn_state = DSN_INIT;
       }
@@ -567,7 +570,7 @@ static bool process_rx_frame(void)
 
   if (!vacuum_connected)
   {
-    DSN_PRINT("HS\r\n");
+    DSN_PRINT("PROT:HS\r\n");
   }
   vacuum_connected = true;
 
@@ -956,11 +959,12 @@ static void handle_sleep(void)
 {
   sleep_flag       = true;
   vacuum_connected = false;
+  charger_at_sleep = dio_read(DIO_CHARGER_CONNECTED);
   port_pin_set_output_level(PRECHARGE_PIN, false);
   port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
   delay_ms(300);
   dsn_state = DSN_SLEEP;
-  DSN_PRINT("SLEEP\r\n");
+  DSN_PRINT("PROT:SLEEP\r\n");
 }
 
 //-----------------------------------------------------------------------------

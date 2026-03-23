@@ -759,7 +759,7 @@ static void bms_handle_trigger_pulled(void)
 static void bms_handle_sleep(void)
 {
   bms_wdt_deinit();
-  serial_debug_send_message("BMS_SLEEP\r\n");
+  serial_debug_send_message("BMS:GOING_TO_SLEEP\r\n");
   bq7693_disable_charge();
   bq7693_disable_discharge();
 
@@ -1152,6 +1152,13 @@ static void bms_enter_standby(void)
   system_gclk_chan_enable(EIC_GCLK_ID);
   /* 5) Start EIC again */
   _extint_enable();
+
+  // clear pending flags before enabling wakeup callbacks,
+  // otherwise a stale edge (e.g. charger plug-in) fires immediately
+  // and WFI returns without actually entering standby
+  extint_chan_clear_detected(9);
+  extint_chan_clear_detected(4);
+  extint_chan_clear_detected(6);
 
   // enable callbacks, need to wakeup the mcu
   extint_chan_enable_callback(9, EXTINT_CALLBACK_TYPE_DETECT);  // MODE_BUTTON            EXTINT 9 - PA09
