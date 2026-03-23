@@ -872,26 +872,22 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
       return true;
 
     case TLV_MAX_CELL_V:  // 0x250B: max cell voltage mV
-      val = bms_get_max_cell_mv();
-      HTOLE16(out_data, val);
+      HTOLE16(out_data, HANDSHAKE_MAX_CELL_MV);
       *out_len = 2;
       return true;
 
     case TLV_MIN_CELL_V:  // 0x250C: min cell voltage mV
-      val = bms_get_min_cell_mv();
-      HTOLE16(out_data, val);
+      HTOLE16(out_data, HANDSHAKE_MIN_CELL_MV);
       *out_len = 2;
       return true;
 
     case TLV_MIN_PACK_V:  // 0x8114: min pack voltage mV
-      val = bms_get_min_pack_voltage_mv();
-      HTOLE16(out_data, val);
+      HTOLE16(out_data, HANDSHAKE_MIN_CELL_MV * HANDSHAKE_NUM_CELLS);
       *out_len = 2;
       return true;
 
     case TLV_MAX_PACK_V:  // 0x8115: max pack voltage mV
-      val = bms_get_max_pack_voltage_mv();
-      HTOLE16(out_data, val);
+      HTOLE16(out_data, HANDSHAKE_MAX_CELL_MV * HANDSHAKE_NUM_CELLS);
       *out_len = 2;
       return true;
       
