@@ -79,6 +79,36 @@ Alternatively, open `V11_BMS.atsln` in Microchip/Atmel Studio 7.
 
 Requires a J-Link debug probe connected via SWD. OpenOCD configuration is in `openocd_samd20.cfg`.
 
+## Initial Battery Calibration
+
+After flashing the firmware, the EEPROM is initialized with default values:
+
+| Parameter | Default Value |
+|-----------|---------------|
+| Total pack capacity | 120% of `PACK_MAX_CAPACITY_MAH` (config.h) |
+| Current charge level | 50% of nominal capacity |
+
+The SOC displayed on the vacuum will be inaccurate until the firmware learns the true pack capacity.
+
+### Recommended First-Use Calibration
+
+1. **Full discharge** — use the vacuum until the battery cuts off (undervoltage fault). This anchors the charge counter to zero and sets the `full_discharge_seen` flag.
+2. **Full charge** — plug in the charger and let it charge to completion (3 pause-retry cycles). Because a full discharge was seen, the firmware directly learns the measured capacity from the complete 0-to-100% cycle.
+
+After this single full cycle, SOC and runtime estimates will be accurate.
+
+### Automatic Capacity Learning
+
+On every subsequent charge completion:
+- If a full discharge was previously seen, the measured charge is adopted as the new capacity (hard learning).
+- Otherwise, the estimated capacity decays slowly toward the measured charge (1/8 filter per cycle).
+
+Capacity is clamped to 120% of `PACK_MAX_CAPACITY_MAH` to reject outliers.
+
+### Factory Reset (EEPROM Defaults)
+
+While the battery is actively charging, press the trigger **20 times within 2 seconds**. The left error LED will blink 10 times to confirm the reset. This restores the default capacity and charge level values.
+
 ## License
 
 GNU GPL v3 or later
