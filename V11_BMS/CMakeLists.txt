@@ -4,6 +4,10 @@ project(samd20_firmware C ASM)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type: Debug or Release" FORCE)
+endif()
+
 # -----------------------------------------------------------------------------
 # MCU / CPU
 # -----------------------------------------------------------------------------
@@ -19,8 +23,6 @@ set(COMMON_C_FLAGS
     ${MCU_FLAGS}
     -ffunction-sections
     -fdata-sections
-    -g3
-    -Os
     -pipe
     -fno-strict-aliasing
     -Wall
@@ -65,12 +67,20 @@ set(COMMON_C_FLAGS
 
 add_compile_options(${COMMON_C_FLAGS})
 
+# Debug:   -Og, debug symbols
+# Release: -Os, no debug symbols
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_options(-Og -g3)
+else()
+    add_compile_options(-Os)
+    add_compile_definitions(NDEBUG)
+endif()
+
 # -----------------------------------------------------------------------------
 # Compile definitions
 # -----------------------------------------------------------------------------
 add_compile_definitions(
     __SAMD20E15__
-    NDEBUG
     BOARD=USER_BOARD
     ARM_MATH_CM0PLUS=true
     I2C_MASTER_CALLBACK_MODE=false
@@ -180,16 +190,15 @@ add_custom_target(flash
         -c "program $<TARGET_FILE:${PROJECT_NAME}.elf> verify reset exit"
     DEPENDS ${PROJECT_NAME}.elf
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    COMMENT "Flashing $<TARGET_FILE:${PROJECT_NAME}.elf> using OpenOCD"
+    COMMENT "Flashing ${PROJECT_NAME} via OpenOCD"
 )
 
-# This will unlock (and fully erase) a Dyson pack with the firmware protection enabled
-# It will need to be programmed after this
+# Unlock (and fully erase) a Dyson pack with firmware protection enabled.
+# The device will need to be programmed after this.
 add_custom_target(unlock
     COMMAND openocd
         -f ${OPENOCD_CFG}
         -c "\"init; at91samd.cpu mwb 0x41002100 0x10; sleep 500; reset; halt; exit\""
-    DEPENDS ${PROJECT_NAME}.elf
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    COMMENT "Flashing $<TARGET_FILE:${PROJECT_NAME}.elf> using OpenOCD"
+    COMMENT "Unlocking firmware-protected Dyson pack via OpenOCD"
 )
