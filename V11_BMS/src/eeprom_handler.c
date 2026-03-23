@@ -16,6 +16,7 @@ void eeprom_write_defaults(void)
 {
   eeprom_data.total_pack_capacity      = (PACK_MAX_CAPACITY_MAH       * 1200ul);  //in micro-amp-hours
   eeprom_data.current_charge_level     = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul);
+  eeprom_data.full_discharge_seen      = 0;
   eeprom_write();
 }
 

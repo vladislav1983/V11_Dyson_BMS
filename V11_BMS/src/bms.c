@@ -68,7 +68,6 @@ static uint16_t charge_pause_counter = 0;
 static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
 static bool process_bms_interrupt = false;
-static bool full_discharge_seen = false;
 
 extern volatile struct eeprom_data eeprom_data;
 
@@ -217,7 +216,7 @@ void bms_interrupt_process(void)
 }
 
 /**
- * @brief Get state of charge as centipercent for vacuum protocol.
+ * @brief Get state of charge as percent * 100 for vacuum protocol.
  * @return SOC in 0.01% units (100-10000), minimum 1% to avoid critical battery screen.
  */
 uint16_t bms_get_soc_x100(void)
@@ -806,7 +805,7 @@ static void bms_handle_fault(void)
       // Anchor counter to known empty state. Capacity learning deferred
       // to charge completion where both endpoints are known.
       eeprom_data.current_charge_level = 0;
-      full_discharge_seen = true;
+      eeprom_data.full_discharge_seen = 1;
     }
     else
     {
@@ -1022,11 +1021,11 @@ static void bms_handle_charging(void)
 
       bms_state = BMS_CHARGER_CONNECTED_NOT_CHARGING;
 
-      if (full_discharge_seen)
+      if (eeprom_data.full_discharge_seen)
       {
         // assign total capacity to currrent charge level if we ar eseen full charge
-        eeprom_data.total_pack_capacity = (eeprom_data.total_pack_capacity + eeprom_data.current_charge_level) / 2;
-        full_discharge_seen = false;
+        eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
+        eeprom_data.full_discharge_seen = 0;
       }
       else if (eeprom_data.current_charge_level < eeprom_data.total_pack_capacity)
       {
