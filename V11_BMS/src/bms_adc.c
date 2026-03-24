@@ -42,8 +42,6 @@ static struct adc_module adc_instance;
 static const enum adc_positive_input adc_ch_map_cfg[BMS_ADC_CH_NUM] =
 {
   [BMS_ADC_CH_TC1]      = ADC_POSITIVE_INPUT_PIN7,  /* PA07 */
-  [BMS_ADC_CH_TC2]      = ADC_POSITIVE_INPUT_PIN16, /* PA08 */
-  //[BMS_ADC_MODE_BUTTON] = ADC_POSITIVE_INPUT_PIN17  /* PA09 */
 };
 
 /*-----------------------------------------------------------------------------

@@ -467,35 +467,19 @@ static void interrupts_init(void)
 }
 
 /**
- * @brief Read pack temperature from two NTC thermistors.
+ * @brief Read pack temperature from NTC thermistor
  * @return temperature in 0.1 degC, 2560 on sensor disagreement.
  */
 static int16_t bms_read_temperature(void)
 {
   int16_t tc1_temp;
-  int16_t tc2_temp;
   uint16_t adc_value;
-  int16_t temp_diff;;
 
   // get tc1
   adc_value = adc_convert_channel(BMS_ADC_CH_TC1);
   tc1_temp  = NTC_ADC2Temperature(adc_value);
-  // get tc2
-  adc_value = adc_convert_channel(BMS_ADC_CH_TC2);
-  tc2_temp  = NTC_ADC2Temperature(adc_value);
 
-  // return temperature point between two thermistors if they have plausible values - no more than 5 degree difference
-  temp_diff = tc1_temp - tc2_temp;
-
-  if(abs(temp_diff) < 50)
-  {
-    return (tc1_temp + tc2_temp) >> 1;
-  }
-  else
-  {
-    BMS_PRINT("BMS:TEMP ERROR: %d\r\n", temp_diff);
-    return 256 * 10;
-  }
+  return tc1_temp;
 }
 
 /**
