@@ -124,6 +124,10 @@
 #define V11_BATTERY_TYPE        0x001F
 #define V11_CAPACITY_001MAH     (PACK_MAX_CAPACITY_MAH * 100u)  // in 0.01 mAh units
 
+// Firmware version string (22 bytes, queried by pair 0x0306)
+#define FW_VERSION_STR_LEN      22
+static const char fw_version_str[FW_VERSION_STR_LEN] = "V11-BMS-1.0";
+
 // Motor speed thresholds from trigger messages
 #define MOTOR_SPEED_OFF         0
 #define MOTOR_SPEED_IDLE        15000
@@ -171,7 +175,6 @@ static uint8_t    tx_length;
 static dsn_state_t dsn_state;
 static sw_timer    wait_timer;
 static sw_timer    session_timer;
-static sw_timer    rx_timer;
 
 static bool        trigger_state;
 static bool        sleep_flag;
@@ -194,7 +197,7 @@ static uint8_t  frame_compute_hdr_crc8(const uint8_t *buf);
 static bool     rx_byte_handler(uint8_t ch);
 static bool     process_rx_frame(void);
 static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class);
-static bool     dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, uint16_t *out_len);
+static bool     dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, uint16_t out_size, uint16_t *out_len);
 static bool     dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len);
 static void     build_trigger_response(uint8_t *out_data, uint16_t *out_len);
 static void     handle_sleep(void);
@@ -279,13 +282,6 @@ void dsn_prot_mainloop(void)
     {
       uint8_t ch;
 
-      // arrives within RX_TIMEOUT_MS, discard and re-sync.
-      if (rx_state == RX_RECEIVING && rx_level > 0 && sw_timer_is_elapsed(&rx_timer, RX_TIMEOUT_MS))
-      {
-        rx_level = 0;
-        rx_state = RX_RECEIVING;
-      }
-
       while (serial_rx_byte(&ch))
       {
         if (rx_byte_handler(ch))
@@ -314,6 +310,10 @@ void dsn_prot_mainloop(void)
     //------------------------------------------------------------------------
     case DSN_TX_FRAME:
       serial_send(tx_buf, tx_length);
+      // flush RX 
+      rx_level = 0;
+      rx_state = RX_INIT;
+      
       if (pending_sleep)
       {
         pending_sleep = false;
@@ -352,34 +352,50 @@ void dsn_prot_mainloop(void)
  */
 static bool rx_byte_handler(uint8_t ch)
 {
-  if (rx_state == RX_COMPLETE || rx_level >= RX_BUF_SIZE)
+  bool complete = false;
+
+  switch (rx_state)
   {
-    rx_level = 0;
-    rx_state = RX_RECEIVING;
+    //-------------------------------------------------------------------------
+    case RX_INIT:
+    case RX_COMPLETE:
+      // Discard bytes until delimiter to re-sync
+      if (ch == FRAME_DELIM)
+      {
+        rx_level = 0;
+        rx_state = RX_RECEIVING;
+      }
+      break;
+    //-------------------------------------------------------------------------
+    case RX_RECEIVING:
+      if (rx_level >= RX_BUF_SIZE)
+      {
+        DSN_PRINT("RX:OVERFLOW\r\n");
+        rx_level = 0;
+        rx_state = RX_INIT;
+      }
+      else if (ch == FRAME_DELIM)
+      {
+        if (rx_level > (OFF_PAYLOAD + 1))
+        {
+          rx_state = RX_COMPLETE;
+          complete = true;
+        }
+        else
+        {
+          if (rx_level > 0)
+            DSN_PRINT("RX:SHORT len=%u hdr=%02X%02X%02X%02X\r\n", rx_level, rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
+          rx_level = 0;
+        }
+      }
+      else
+      {
+        rx_buf[rx_level++] = ch;
+      }
+      break;
   }
 
-  if (ch == FRAME_DELIM)
-  {
-    if(rx_level > (OFF_PAYLOAD + 1)) // minimum frame size with empty payload)
-    {
-      rx_state = RX_COMPLETE;
-      return true;
-    }
-    else
-    {
-      // Delimiter received but frame too short -> discard and re-sync
-      rx_level = 0;
-      rx_state = RX_RECEIVING;
-      sw_timer_start(&rx_timer);
-      return false;
-    }
-  }
-
-  if (rx_level == 0)
-    sw_timer_start(&rx_timer);
-
-  rx_buf[rx_level++] = ch;
-  return false;
+  return complete;
 }
 
 /**
@@ -539,22 +555,34 @@ static bool process_rx_frame(void)
 
   // Verify header CRC8
   if (!frame_verify_hdr_crc8(rx_buf, rx_level))
+  {
+    DSN_PRINT("RX:BAD_CRC8 len=%u hdr=%02X%02X%02X%02X\r\n", rx_level, rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
     return false;
+  }
 
   // Check frame length matches SIZE field
   size = LE16TOH(&rx_buf[OFF_SIZE_LO]);
 
   if (size < 8 || rx_level != (size + OFF_DIR))
+  {
+    DSN_PRINT("RX:BAD_SIZE sz=%u lvl=%u\r\n", size, rx_level);
     return false;
+  }
 
   // Verify CRC32
   if (!frame_verify_crc32(rx_buf))
+  {
+    DSN_PRINT("RX:BAD_CRC32\r\n");
     return false;
+  }
 
   // Accept SRC=0x01 (standard data) only.
   // Reject discovery broadcasts (SRC=0xFF) and other unknown sources.
   if (rx_buf[OFF_SRC] != 0x01)
+  {
+    DSN_PRINT("RX:BAD_SRC 0x%02X\r\n", rx_buf[OFF_SRC]);
     return false;
+  }
 
   // Reset session timer on any valid frame addressed to us
   sw_timer_start(&session_timer);
@@ -588,7 +616,10 @@ static bool process_rx_frame(void)
   resp_payload_len = analyze_frame(&ctx, req_class);
 
   if (resp_payload_len == 0)
+  {
+    DSN_PRINT("RX:EMPTY_RESP cls=0x%02X\r\n", req_class);
     return false;
+  }
 
   // Compute SIZE = payload + 4 (DIR+MARKER+SRC+CLASS) + 4 (CRC32)
   resp_size = resp_payload_len + 4 + 4;
@@ -604,7 +635,10 @@ static bool process_rx_frame(void)
   tx_length = frame_stuff(tx_buf, (uint8_t)(resp_size + OFF_DIR), TX_BUF_SIZE);
 
   if (tx_length == 0)
+  {
+    DSN_PRINT("TX:STUFF_OVERFLOW\r\n");
     return false;
+  }
 
   return true;
 }
@@ -649,12 +683,13 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
     ctx->in_remaining -= 2;
 
     resp_len = 0;
-    ok = dispatch_pair(ctx, pair, resp_data, &resp_len);
+    ok = dispatch_pair(ctx, pair, resp_data, sizeof(resp_data), &resp_len);
 
     if (!ok)
     {
       // Unknown pair — we don't know how many bytes to consume,
       // so we must stop processing to avoid corrupting subsequent pairs.
+      DSN_PRINT("RX:UNK_PAIR 0x%04X\r\n", pair);
       break;
     }
 
@@ -696,10 +731,11 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
  * @param in_ctx    Processing context (input cursor advanced on success).
  * @param pair      16-bit pair ID from the incoming frame.
  * @param out_data  Buffer for response payload.
+ * @param out_size  Size of out_data buffer in bytes.
  * @param out_len   Number of response bytes written.
  * @return true if pair is known, false to abort frame processing.
  */
-static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, uint16_t *out_len)
+static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, uint16_t out_size, uint16_t *out_len)
 {
   const uint8_t *in;
   uint8_t  reg;
@@ -722,10 +758,12 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       in_ctx->in_ptr       += 1;
       in_ctx->in_remaining -= 1;
 
+      if (out_size < 1)
+        return true;
       out_data[0] = in[0];
       *out_len = 1;
       return true;
-    
+
     //---------------------------------------------------------------------------------------------
     // TLV_READ: [0x02 0x10] [REG] [TYPE] -> [0x01 0x10] [REG] [TYPE] [LEN_LO] [LEN_HI] [DATA...]
     case 0x1002:
@@ -740,24 +778,64 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       type = in[1];
       key = ((uint16_t)type << 8) | reg;
 
+      val_len = 0;
+      if (!dispatch_tlv_read(key, val_buf, &val_len))
+        return true;   // unknown register — skip
+
+      if (out_size < 4 + val_len)
+        return true;
+
       // Output format: [REG] [TYPE] [LEN_LO] [LEN_HI] [DATA...]
       out_data[0] = reg;
       out_data[1] = type;
-
-      val_len = 0;
-      if (!dispatch_tlv_read(key, val_buf, &val_len))
-        return true;   // unknown register — skip 
-
       HTOLE16(&out_data[2], val_len);
       memcpy(&out_data[4], val_buf, val_len);
       *out_len = 4 + val_len;
       return true;
+
+    //---------------------------------------------------------------------------------------------
+    // FW_VERSION_STR: [0x06 0x03] [OFFSET] [REQ_LEN] -> [0x07 0x03] [ACTUAL_LEN] [DATA...]
+    case 0x0306:
+    {
+      uint8_t req_len;
+
+      if (in_ctx->in_remaining < 2)
+        return false;
+
+      in = in_ctx->in_ptr;
+      in_ctx->in_ptr       += 2;
+      in_ctx->in_remaining -= 2;
+
+      req_len = in[1];
+
+      if (req_len > FW_VERSION_STR_LEN)
+        req_len = FW_VERSION_STR_LEN;
+
+      if (1 + req_len > out_size)
+        return true;
+
+      out_data[0] = req_len;
+      memcpy(&out_data[1], fw_version_str, req_len);
+      *out_len = 1 + req_len;
+      return true;
+    }
+
+    //---------------------------------------------------------------------------------------------
+    // BMS_MASKED_WRITE: [0x16 0x82] [VAL_LO] [VAL_HI] [MASK_LO] [MASK_HI] -> silent ack
+    case 0x8216:
+      if (in_ctx->in_remaining < 4)
+        return false;
+
+      in_ctx->in_ptr       += 4;
+      in_ctx->in_remaining -= 4;
+      return true;
+
     //---------------------------------------------------------------------------------------------
     // MOTOR_SPEED: [0x00 0x82] [SPEED LE 4B] -> [0x01 0x82] [ACK_SPEED LE 4B] [0x00] [FLAGS]
     case 0x8200:
       if (in_ctx->in_remaining < 4)
         return false;
-        
+
       in = in_ctx->in_ptr;
       in_ctx->in_ptr       += 4;
       in_ctx->in_remaining -= 4;
@@ -767,10 +845,12 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       if (last_motor_speed == MOTOR_SPEED_OFF)
         pending_sleep = true;
 
+      if (out_size < 6)
+        return true;
       build_trigger_response(out_data, out_len);
       return true;
 
-  //---------------------------------------------------------------------------------------------
+    //---------------------------------------------------------------------------------------------
     default:
       return false;
   }
