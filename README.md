@@ -41,7 +41,7 @@ IF YOU DO NOT FULLY UNDERSTAND THE RISKS OF LITHIUM BATTERIES, DO NOT USE THIS P
 - Dyson V11 (click-in and screw-type motor head)
 - Dyson V15
 
-The firmware implements the Dyson serial protocol with TLV-based communication, supporting both the standard data protocol (SRC=0x01) and V11 screw-type extended protocol (SRC=0x02, SRC=0x03).
+The firmware implements the Dyson serial protocol with TLV-based communication.
 
 ## Build Toolchain
 
@@ -77,7 +77,10 @@ Alternatively, open `V11_BMS.atsln` in Microchip/Atmel Studio 7.
 
 ### Flashing
 
-Requires a J-Link debug probe connected via SWD. OpenOCD configuration is in `openocd_samd20.cfg`.
+Requires either : 
+
+- J-Link debug probe connected via SWD. OpenOCD configuration is in `openocd_samd20.cfg`.
+- Atmel ICE programmer via SWD.  OpenOCD configuration is in 'openocd_samd20_ice.cfg'.
 
 ## Initial Battery Calibration
 
