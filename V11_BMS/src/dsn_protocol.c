@@ -280,8 +280,7 @@ void dsn_prot_mainloop(void)
       uint8_t ch;
 
       // arrives within RX_TIMEOUT_MS, discard and re-sync.
-      if (rx_state == RX_RECEIVING && rx_level > 0 &&
-          sw_timer_is_elapsed(&rx_timer, RX_TIMEOUT_MS))
+      if (rx_state == RX_RECEIVING && rx_level > 0 && sw_timer_is_elapsed(&rx_timer, RX_TIMEOUT_MS))
       {
         rx_level = 0;
         rx_state = RX_RECEIVING;
@@ -289,7 +288,7 @@ void dsn_prot_mainloop(void)
 
       while (serial_rx_byte(&ch))
       {
-        if (rx_byte_handler(ch) && rx_level > 0)
+        if (rx_byte_handler(ch))
         {
           if (process_rx_frame())
           {
@@ -361,8 +360,19 @@ static bool rx_byte_handler(uint8_t ch)
 
   if (ch == FRAME_DELIM)
   {
-    rx_state = RX_COMPLETE;
-    return true;
+    if(rx_level > (OFF_PAYLOAD + 1)) // minimum frame size with empty payload)
+    {
+      rx_state = RX_COMPLETE;
+      return true;
+    }
+    else
+    {
+      // Delimiter received but frame too short -> discard and re-sync
+      rx_level = 0;
+      rx_state = RX_RECEIVING;
+      sw_timer_start(&rx_timer);
+      return false;
+    }
   }
 
   if (rx_level == 0)
