@@ -199,11 +199,9 @@ void bms_interrupt_process(void)
         cc_uah /= 32768;
         eeprom_data.current_charge_level += cc_uah;
 
-        // Clamp charge level to valid range. Capacity learning happens
-        // only at charge completion endpoints, not in the ISR.
+        // Clamp charge level to valid range
         if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
           eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
-
         if (eeprom_data.current_charge_level < 0)
           eeprom_data.current_charge_level = 0;
       }
@@ -638,7 +636,7 @@ static bool bms_is_pack_full(void)
   uint16_t *cell_voltages = bq7693_get_cell_voltages();
 
   // Use hysteresis: only apply the lower release threshold when already in NOT_CHARGING state
-  uint16_t threshold = (bms_state == BMS_CHARGER_CONNECTED_NOT_CHARGING)
+  uint16_t threshold = (bms_state == BMS_CHARGER_CONNECTED)
                      ? CELL_FULL_CHARGE_RELEASE_VOLTAGE // 4100mV
                      : CELL_FULL_CHARGE_VOLTAGE;        // 4170mV
 
@@ -832,9 +830,6 @@ static void bms_handle_charger_connected(void)
 {
   if (bms_is_pack_full())
   {
-    //Pack is already full - go straight to not-charging state.
-    //Going to BMS_IDLE would immediately re-detect the charger and
-    //bounce back here in a tight loop with no delays, hammering I2C.
     bms_state = BMS_CHARGER_CONNECTED_NOT_CHARGING;
   }
   else if (bms_is_safe_to_charge())
@@ -852,6 +847,8 @@ static void bms_handle_charger_connected(void)
 /** @brief Not charging: manage standby sleep while charger is connected. */
 static void bms_handle_charger_connected_not_charging(void)
 {
+  leds_blink_leds(2000);
+
   while(1)
   {
     if(dsn_prot_get_sleep_flag() == true)
@@ -1030,11 +1027,12 @@ static void bms_handle_charging(void)
         eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
         eeprom_data.full_discharge_seen = 0;
       }
-      else if (eeprom_data.current_charge_level < eeprom_data.total_pack_capacity)
+      else
       {
-        // filtration if total_pack_capacity, slow decay to total capacity
+        // filtration of total_pack_capacity, slow decay only (never increase)
         int32_t gap = eeprom_data.total_pack_capacity - eeprom_data.current_charge_level;
-        eeprom_data.total_pack_capacity -= gap >> 3;
+        if (gap > 0)
+          eeprom_data.total_pack_capacity -= gap >> 3;
       }
 
       // Clamp to upper bound
