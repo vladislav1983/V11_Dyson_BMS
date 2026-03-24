@@ -80,7 +80,9 @@ Alternatively, open `V11_BMS.atsln` in Microchip/Atmel Studio 7.
 Requires either : 
 
 - J-Link debug probe connected via SWD. OpenOCD configuration is in `openocd_samd20.cfg`.
-- Atmel ICE programmer via SWD.  OpenOCD configuration is in 'openocd_samd20_ice.cfg'.
+- Atmel ICE programmer via SWD.  OpenOCD configuration is in `openocd_samd20_ice.cfg`.
+
+(Update the CMakeLists.txt to point to the correct configuration flie for your programmer)
 
 ## Initial Battery Calibration
 
