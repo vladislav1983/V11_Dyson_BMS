@@ -835,7 +835,12 @@ static void bms_handle_charger_connected_not_charging(void)
 
   while(1)
   {
-    if(dsn_prot_get_sleep_flag() == true)
+    if(dsn_prot_get_vacuum_connected() == false)
+    {
+      bms_state = BMS_SLEEP;
+      return;
+    }
+    else if(dsn_prot_get_sleep_flag() == true)
     {
       bms_enter_standby();
       serial_debug_send_message("BMS_STANDBY\r\n");
