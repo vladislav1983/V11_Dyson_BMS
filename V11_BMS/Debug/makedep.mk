@@ -16,6 +16,8 @@ src\bms_wdt.c
 
 src\dio.c
 
+src\dsn_protocol.c
+
 src\sw_timer.c
 
 src\ASF\sam0\drivers\sercom\usart\usart_interrupt.c
@@ -25,8 +27,6 @@ src\bms_adc.c
 src\crc.c
 
 src\ntc.c
-
-src\protocol.c
 
 src\serial_debug.c
 

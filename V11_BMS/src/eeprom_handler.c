@@ -4,18 +4,30 @@
  * Author :  David Pye
  *  Contact: davidmpye@gmail.com
  *  License: GNU GPL v3 or later
- */ 
+ */
 
 #include "eeprom_handler.h"
 volatile struct eeprom_data eeprom_data;
 
-static void eeprom_write_defaults(void)
+/**
+ * @brief Write factory default values to EEPROM (capacity reset).
+ */
+void eeprom_write_defaults(void)
 {
-  eeprom_data.total_pack_capacity      = (PACK_MAX_CAPACITY_MAH       * 1000ul);  //in micro-amp-hours
+  eeprom_data.total_pack_capacity      = (PACK_MAX_CAPACITY_MAH       * 1200ul);  //in micro-amp-hours
   eeprom_data.current_charge_level     = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul);
+  eeprom_data.full_discharge_seen      = 0;
   eeprom_write();
 }
 
+/**
+ * @brief Initialize EEPROM emulator, program fuses if needed, verify stored data.
+ *
+ * If EEPROM fuses are not set, programs them and resets the MCU.
+ * On first use or CRC mismatch, writes factory defaults.
+ *
+ * @return ASF status code from eeprom_emulator_init().
+ */
 int eeprom_init(void)
 {
   enum status_code error_code = eeprom_emulator_init();
@@ -52,6 +64,11 @@ int eeprom_init(void)
   return error_code;
 }
 
+/**
+ * @brief Read EEPROM page and verify CRC32 integrity.
+ *
+ * @return 0 on success, -1 on CRC mismatch.
+ */
 int eeprom_read(void)
 {
   uint8_t buffer[EEPROM_PAGE_SIZE];
@@ -59,7 +76,7 @@ int eeprom_read(void)
   memcpy((void*)&eeprom_data, buffer, sizeof(eeprom_data));
 
   //Verify CRC over data fields (everything before the crc32 field)
-  uint32_t calc = calc_crc32(0xFFFFFFFF, (uint8_t *)&eeprom_data,
+  uint32_t calc = calc_crc32((const uint8_t *)&eeprom_data,
       sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
   if (calc != eeprom_data.crc32) {
     return -1;  //CRC mismatch - data corrupted
@@ -67,10 +84,15 @@ int eeprom_read(void)
   return 0;
 }
 
+/**
+ * @brief Compute CRC32 and write EEPROM page.
+ *
+ * @return 0 on success.
+ */
 int eeprom_write(void)
 {
   //Compute CRC over data fields (everything before the crc32 field)
-  eeprom_data.crc32 = calc_crc32(0xFFFFFFFF, (uint8_t *)&eeprom_data,
+  eeprom_data.crc32 = calc_crc32((const uint8_t *)&eeprom_data,
       sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
 
   uint8_t buffer[EEPROM_PAGE_SIZE];
@@ -80,19 +102,24 @@ int eeprom_write(void)
   return 0;
 }
 
-int eeprom_fuses_set(void) 
+/**
+ * @brief Program NVM fuses to enable 1024-byte EEPROM, then reset MCU.
+ *
+ * @return Never returns (triggers NVIC_SystemReset).
+ */
+int eeprom_fuses_set(void)
 {
   //Set the the NVM
   struct nvm_config config_nvm;
   nvm_get_config_defaults(&config_nvm);
   nvm_set_config(&config_nvm);
-  
+
   uint32_t temp;
   uint32_t data[2];
-  
+
   /* Wait for NVM command to complete */
   while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY));
-    
+
   /* Read the fuse settings in the user row, 64 bit */
   data[0] = *((uint32_t *)NVMCTRL_AUX0_ADDRESS);
   data[1] = *(((uint32_t *)NVMCTRL_AUX0_ADDRESS) + 1);
@@ -108,47 +135,47 @@ int eeprom_fuses_set(void)
   /* Disable Cache */
   temp = NVMCTRL->CTRLB.reg;
   NVMCTRL->CTRLB.reg = temp | NVMCTRL_CTRLB_CACHEDIS;
-  
+
   /* Clear error flags */
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
 
   /* Set address, command will be issued elsewhere */
   NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
-  
+
   /* Erase the user page */
   NVMCTRL->CTRLA.reg = NVM_COMMAND_ERASE_AUX_ROW | NVMCTRL_CTRLA_CMDEX_KEY;
-  
+
   /* Wait for NVM command to complete */
   while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY));
-  
+
   /* Clear error flags */
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
-  
+
   /* Set address, command will be issued elsewhere */
   NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
-  
+
   /* Erase the page buffer before buffering new data */
   NVMCTRL->CTRLA.reg = NVM_COMMAND_PAGE_BUFFER_CLEAR | NVMCTRL_CTRLA_CMDEX_KEY;
 
   /* Wait for NVM command to complete */
   while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY));
-  
+
   /* Clear error flags */
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
-  
+
   /* Set address, command will be issued elsewhere */
   NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
-  
+
   // Write back the updated fuse bits.
   *((uint32_t *)NVMCTRL_AUX0_ADDRESS) = data[0];
   *(((uint32_t *)NVMCTRL_AUX0_ADDRESS) + 1) = data[1];
-  
+
   /* Write the user page */
   NVMCTRL->CTRLA.reg = NVM_COMMAND_WRITE_AUX_ROW | NVMCTRL_CTRLA_CMDEX_KEY;
-  
+
   /* Restore the settings */
   NVMCTRL->CTRLB.reg = temp;
-  
+
   //Reset the MCU
   NVIC_SystemReset();
 }

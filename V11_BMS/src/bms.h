@@ -76,6 +76,7 @@ enum BMS_ERROR_CODE
  extern void bms_interrupt_callback(void) ;
  extern void bms_interrupt_process(void);
 
+
 /*-----------------------------------------------------------------------------
   END OF MODULE DEFINITION FOR MULTIPLE INCLUSION
 -----------------------------------------------------------------------------*/

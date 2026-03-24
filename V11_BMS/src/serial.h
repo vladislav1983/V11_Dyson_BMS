@@ -32,7 +32,10 @@
   DECLARATION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 extern void serial_init(void);
+extern bool serial_rx_byte(uint8_t *ch);
+extern bool serial_rx_available(void);
 extern void serial_send(uint8_t* buff_ptr, uint8_t buff_size);
+extern void SERCOM2_Handler_BMS(void);
 
 /*-----------------------------------------------------------------------------
   END OF MODULE DEFINITION FOR MULTIPLE INCLUSION

@@ -23,16 +23,18 @@
 #include "crc.h"
 
 //A struct to represent the stored eeprom data
-struct eeprom_data 
+struct eeprom_data
 {
   int32_t total_pack_capacity;    //micro-amp-hours
   int32_t current_charge_level;   //micro-amp-hours
+  uint8_t full_discharge_seen;    //capacity calibration flag
   uint32_t crc32;
 } ;
 
-int eeprom_init(void);
-int eeprom_read(void);
-int eeprom_write(void);
-int eeprom_fuses_set(void);
+extern int eeprom_init(void);
+extern int eeprom_read(void);
+extern int eeprom_write(void);
+extern int eeprom_fuses_set(void);
+extern void eeprom_write_defaults(void);
 
 #endif /* EEPROM_H_ */

@@ -4,7 +4,7 @@
  * Author :  David Pye
  *  Contact: davidmpye@gmail.com
  *  License: GNU GPL v3 or later
- */ 
+ */
 
 /*-----------------------------------------------------------------------------
     INCLUDE FILES
@@ -36,7 +36,7 @@
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
 -----------------------------------------------------------------------------*/
-typedef struct 
+typedef struct
 {
   Tc *const                       hw;
   uint32_t                        pin_out;
@@ -52,7 +52,7 @@ struct tc_module tc_instances[LEDS_NUM];
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
 -----------------------------------------------------------------------------*/
-static const leds_cfg_t leds_cfg[] = 
+static const leds_cfg_t leds_cfg[] =
 {
   [LEDS_LED_ERR_LEFT]  = {.hw = TC3, .pin_out = PIN_PA19F_TC3_WO1, .pin_mux = PINMUX_PA19F_TC3_WO1, .chnl = TC_COMPARE_CAPTURE_CHANNEL_1 }, // PIN_PA19
   [LEDS_LED_ERR_RIGHT] = {.hw = TC2, .pin_out = PIN_PA00F_TC2_WO0, .pin_mux = PINMUX_PA00F_TC2_WO0, .chnl = TC_COMPARE_CAPTURE_CHANNEL_0 }, // PIN_PA00
@@ -65,9 +65,13 @@ static const leds_cfg_t leds_cfg[] =
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
+
+/**
+ * @brief Initialise LED PWM timers.
+ *
+ * Configures one TC instance per LED in 16-bit normal PWM mode
+ * with duty initially set to 0 (off).
+ */
  void leds_init(void)
  {
   struct tc_config config_tc;
@@ -89,9 +93,11 @@ static const leds_cfg_t leds_cfg[] =
   }
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Play a smooth fade-in / fade-out LED sequence.
+ *
+ * Both LEDs ramp up then down over 400 steps with 1 ms spacing.
+ */
 void leds_sequence(void)
 {
   uint8_t duty;
@@ -110,9 +116,9 @@ void leds_sequence(void)
   }
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Turn off all LEDs (duty = 0%).
+ */
 void leds_off(void)
 {
   const uint32_t cc_0_ppt = 0;
@@ -123,9 +129,9 @@ void leds_off(void)
   }
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Turn on all LEDs at full brightness (duty = 100%).
+ */
 void leds_on(void)
 {
   const uint32_t cc_100_ppt = (CAPTURE_VALUE);
@@ -136,9 +142,13 @@ void leds_on(void)
   }
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Blink all LEDs once for a given duration.
+ *
+ * LEDs are on for the first half and off for the second half.
+ *
+ * @param ms  Total blink duration in milliseconds.
+ */
 void leds_blink_leds(uint32_t ms)
 {
   const uint32_t cc_100_ppt = (CAPTURE_VALUE);
@@ -159,9 +169,12 @@ void leds_blink_leds(uint32_t ms)
   sw_timer_delay_ms(ms / 2);
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Blink a single LED once for a given duration.
+ *
+ * @param led  LED index.
+ * @param ms   Total blink duration in milliseconds.
+ */
 void leds_blink_led(leds_t led, uint32_t ms)
 {
   const uint32_t cc_100_ppt = (CAPTURE_VALUE);
@@ -176,13 +189,17 @@ void leds_blink_led(leds_t led, uint32_t ms)
   }
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Blink a LED (or all LEDs) a specified number of times.
+ *
+ * @param led  LED index, or LEDS_NUM to blink all LEDs.
+ * @param num  Number of blinks.
+ * @param ms   Duration per blink in milliseconds.
+ */
 void leds_blink_leds_num(leds_t led, uint32_t num, uint32_t ms)
 {
   for(uint32_t num_l = 0; num_l < num; num_l++)
-  { 
+  {
     if(led <= LEDS_NUM)
     {
       switch (led)
@@ -199,9 +216,12 @@ void leds_blink_leds_num(leds_t led, uint32_t num, uint32_t ms)
   }
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Set the PWM duty cycle of a single LED.
+ *
+ * @param led      LED index.
+ * @param duty_ppt Duty cycle in percent (0–100).
+ */
 void leds_set_led_duty(leds_t led, uint8_t duty_ppt)
 {
   if(led < LEDS_NUM)
@@ -214,15 +234,7 @@ void leds_set_led_duty(leds_t led, uint8_t duty_ppt)
 /*-----------------------------------------------------------------------------
   DEFINITION OF LOCAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
 
 /*-----------------------------------------------------------------------------
   END OF MODULE
 -----------------------------------------------------------------------------*/
-
-
-
-
- 

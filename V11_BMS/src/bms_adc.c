@@ -4,7 +4,7 @@
  * Created: 21-Jan-26 10:09:58
  * Author : Vladislav Gyurov
  * License: GNU GPL v3 or later
- */ 
+ */
  /*-----------------------------------------------------------------------------
     INCLUDE FILES
 -----------------------------------------------------------------------------*/
@@ -39,11 +39,9 @@ static struct adc_module adc_instance;
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
 -----------------------------------------------------------------------------*/
-static const enum adc_positive_input adc_ch_map_cfg[BMS_ADC_CH_NUM] = 
+static const enum adc_positive_input adc_ch_map_cfg[BMS_ADC_CH_NUM] =
 {
   [BMS_ADC_CH_TC1]      = ADC_POSITIVE_INPUT_PIN7,  /* PA07 */
-  [BMS_ADC_CH_TC2]      = ADC_POSITIVE_INPUT_PIN16, /* PA08 */
-  //[BMS_ADC_MODE_BUTTON] = ADC_POSITIVE_INPUT_PIN17  /* PA09 */
 };
 
 /*-----------------------------------------------------------------------------
@@ -53,9 +51,13 @@ static const enum adc_positive_input adc_ch_map_cfg[BMS_ADC_CH_NUM] =
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+
+/**
+ * @brief Initialise the ADC peripheral for thermistor readings.
+ *
+ * Configures the SAMD20 ADC in 12-bit single-shot mode with
+ * internal VCC/1.48 reference and disables all ADC interrupts.
+ */
 void bms_adc_init(void)
 {
   struct adc_config config_adc;
@@ -80,9 +82,15 @@ void bms_adc_init(void)
   adc_enable(&adc_instance);
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Convert a single ADC channel (blocking).
+ *
+ * Selects the channel mux, triggers a one-shot conversion, and
+ * busy-waits until the result is ready.
+ *
+ * @param ch  ADC channel to convert.
+ * @return    12-bit ADC result, or 0xFFFF on error.
+ */
 uint16_t adc_convert_channel(bms_adc_ch_t ch)
 {
   enum status_code status;
@@ -115,9 +123,12 @@ uint16_t adc_convert_channel(bms_adc_ch_t ch)
   return result;
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Convert all configured ADC channels sequentially.
+ *
+ * Results are cached in a local array and can be read back with
+ * bms_adc_read_ch().
+ */
 void adc_convert_channels(void)
 {
   enum status_code status;
@@ -150,9 +161,12 @@ void adc_convert_channels(void)
   }
 }
 
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
+/**
+ * @brief Read the last cached ADC result for a channel.
+ *
+ * @param ch  ADC channel to read.
+ * @return    Cached 12-bit ADC value, or 0xFFFF if the channel is invalid.
+ */
 uint16_t bms_adc_read_ch(bms_adc_ch_t ch)
 {
   uint16_t adc_ch_value = 0xFFFF;
@@ -168,9 +182,6 @@ uint16_t bms_adc_read_ch(bms_adc_ch_t ch)
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
 
 /*-----------------------------------------------------------------------------
     END OF MODULE

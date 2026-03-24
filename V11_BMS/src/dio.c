@@ -4,7 +4,7 @@
  * Created: 13/02/2026 22:13:02
  * Author : Vladislav Gyurov
  * License: GNU GPL v3 or later
- */ 
+ */
  /*-----------------------------------------------------------------------------
     INCLUDE FILES
 -----------------------------------------------------------------------------*/
@@ -31,7 +31,7 @@
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
 -----------------------------------------------------------------------------*/
-typedef struct  
+typedef struct
 {
   const uint8_t gpio_pin;
   uint8_t deb_ticks;
@@ -47,7 +47,7 @@ typedef struct
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL VARIABLES
 -----------------------------------------------------------------------------*/
-static dio_data_t dio_data[DIO_NUM] = 
+static dio_data_t dio_data[DIO_NUM] =
 {
   [DIO_CHARGER_CONNECTED] = {.value_old = 0, .debounced_value = 0, .debounce_counter = 0 },
   [DIO_MODE_BUTTON      ] = {.value_old = 0, .debounced_value = 0, .debounce_counter = 0 },
@@ -59,7 +59,7 @@ static sw_timer task_timer = 0;
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL CONSTANTS
 -----------------------------------------------------------------------------*/
-static const dio_cfg_t dio_cfg[DIO_NUM] = 
+static const dio_cfg_t dio_cfg[DIO_NUM] =
 {
   [DIO_CHARGER_CONNECTED] = {.gpio_pin = CHARGER_CONNECTED_PIN, .deb_ticks = (50 / DIO_TASK_TICKS)},
   [DIO_MODE_BUTTON      ] = {.gpio_pin = MODE_BUTTON_PIN,       .deb_ticks = (50 / DIO_TASK_TICKS)},
@@ -73,17 +73,22 @@ static const dio_cfg_t dio_cfg[DIO_NUM] =
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
+
+/**
+ * @brief Initialise the digital I/O module.
+ *
+ * Starts the periodic task timer used by dio_mainloop().
+ */
 void dio_init(void)
 {
   sw_timer_start(&task_timer);
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Periodic DIO task — poll and debounce every digital input.
+ *
+ * Called from the main loop.  Runs every DIO_TASK_TICKS milliseconds.
+ */
 void dio_mainloop(void)
 {
   bool in;
@@ -104,9 +109,12 @@ void dio_mainloop(void)
   }
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Read the debounced value of a digital input.
+ *
+ * @param dio  Channel index (DIO_CHARGER_CONNECTED, etc.).
+ * @return     true if the input is active, false otherwise.
+ */
 bool dio_read(dio_type_t dio)
 {
   bool dio_level = false;
@@ -119,13 +127,23 @@ bool dio_read(dio_type_t dio)
   return dio_level;
 }
 
-//- **************************************************************************
-//! \brief
-//- **************************************************************************
+/**
+ * @brief Generic debounce algorithm.
+ *
+ * Counts consecutive samples where the current value matches value_old.
+ * When the counter reaches zero the debounced output is updated.
+ *
+ * @param value                    Current raw input sample.
+ * @param value_old                Previous raw input sample.
+ * @param debounced_value          Pointer to the debounced output.
+ * @param debounce_counter         Pointer to the remaining tick counter.
+ * @param debounce_counter_preset  Number of ticks required for a stable reading.
+ * @return true when the debounce has settled, false while counting.
+ */
 bool dio_debounce(uint8_t value, uint8_t value_old, uint8_t *debounced_value, uint16_t *debounce_counter, uint16_t debounce_counter_preset)
 {
   bool debounce_finished = false;
-  
+
   if ((*debounce_counter == 0) || (debounce_counter_preset == 0) || (debounced_value == NULL) || (debounce_counter == NULL))
   {
     debounce_finished = true;
@@ -142,22 +160,19 @@ bool dio_debounce(uint8_t value, uint8_t value_old, uint8_t *debounced_value, ui
       *debounce_counter = *debounce_counter - 1;
     }
   }
-  
+
   if (*debounce_counter == 0)
   {
     debounce_finished = true;
     *debounced_value = value;                       /* latest value is considered to be the new debounced value */
   }
-  
+
   return debounce_finished;
 }
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS
 -----------------------------------------------------------------------------*/
-//- **************************************************************************
-//! \brief 
-//- **************************************************************************
 
 /*-----------------------------------------------------------------------------
     END OF MODULE

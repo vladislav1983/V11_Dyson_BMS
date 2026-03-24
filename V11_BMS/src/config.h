@@ -29,18 +29,19 @@
 #define MODE_BUTTON_PULLUP_ENABLE_PIN       PIN_PA18
 #define PRECHARGE_PIN                       PIN_PA24
 
-#define PACK_MAX_CAPACITY_MAH               4100
+#define PACK_MAX_CAPACITY_MAH               3600
 #define CELL_LOWEST_DISCHARGE_VOLTAGE       2500  //mV - wont allow pack to discharge if any cells lower than this
 #define CELL_LOWEST_CHARGE_VOLTAGE          2000    //mV - won't try to charge the pack if any cells lower than this
-#define CELL_FULL_CHARGE_VOLTAGE            4200    //mV - fully charged cell voltage.
+#define CELL_FULL_CHARGE_VOLTAGE            4170    //mV - fully charged cell voltage. Original BMS serial log shows cells charging to 4.17V.
+#define CELL_FULL_CHARGE_RELEASE_VOLTAGE    4100    //mV - resume charging below this (70mV hysteresis)
 
 #define CELL_OVERVOLTAGE_TRIP               4250    //BMS will trip out at this voltage - NB DO NOT set outside of 3150mV - 4700mV or it wont' work! 
 #define CELL_UNDERVOLTAGE_TRIP              2450    //BMS will trip out at this voltage - NB DO NOT set outside of 1700mv - 3000mV or it wont' work!
 
 //18650 cell temperature limits from Molicell datasheet.
-#define MAX_PACK_TEMPERATURE                60        //'C - if pack temperature greater than this, no charge/discharge allowed.
-#define MIN_PACK_CHARGE_TEMP                -300        //'C - if less than this, no charge.
-#define MIN_PACK_DISCHARGE_TEMP             -400      //'C - if less than this, no discharge
+#define MAX_PACK_TEMPERATURE                60       //'C - if pack temperature greater than this, no charge/discharge allowed.
+#define MIN_PACK_CHARGE_TEMP                0        //'C - if less than this, no charge.
+#define MIN_PACK_DISCHARGE_TEMP             -40      //'C - if less than this, no discharge
 // Limits disabled, as V15 & V11 have 2xRTDs, now unknown where are assigned, therefore even max temp doesnt work
 // Do not charge battery when hot and not supervised! This is for Debug only for V15, battery pack outputs 24V
 
