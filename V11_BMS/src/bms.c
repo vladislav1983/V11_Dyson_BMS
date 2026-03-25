@@ -835,12 +835,12 @@ static void bms_handle_charger_connected_not_charging(void)
 
   while(1)
   {
-    if(dsn_prot_get_vacuum_connected() == false)
+    if (!dio_read(DIO_CHARGER_CONNECTED))
     {
-      bms_state = BMS_SLEEP;
+      bms_state = BMS_IDLE;
       return;
     }
-    else if(dsn_prot_get_sleep_flag() == true)
+    else if(dsn_prot_get_sleep_flag() == true || dsn_prot_get_vacuum_connected() == false)
     {
       bms_enter_standby();
       serial_debug_send_message("BMS_STANDBY\r\n");
@@ -855,11 +855,6 @@ static void bms_handle_charger_connected_not_charging(void)
       // reset protocol state machine, wait for handshake
       dsn_prot_reset();
       leds_blink_leds_num(LEDS_NUM, 2, 100);
-    }
-    else if (!dio_read(DIO_CHARGER_CONNECTED))
-    {
-      bms_state = BMS_IDLE;
-      return;
     }
     sw_timer_delay_ms(100);
   }
