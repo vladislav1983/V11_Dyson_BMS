@@ -2,6 +2,10 @@
 # Automatically-generated file. Do not edit or delete the file
 ################################################################################
 
+src\ASF\sam0\drivers\rtc\rtc_count.c
+
+src\ASF\sam0\drivers\rtc\rtc_count_interrupt.c
+
 src\ASF\sam0\drivers\sercom\sercom_interrupt.c
 
 src\ASF\sam0\drivers\tc\tc.c

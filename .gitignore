@@ -10,3 +10,5 @@
 *.map
 *.srec
 *.log
+V11_BMS/Release/
+V11_BMS/build_release/

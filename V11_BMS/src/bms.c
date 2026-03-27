@@ -48,6 +48,10 @@ volatile bool     force_sleep = false;
 #define ROUND(x) (((x) + 0.5))
 #define PACK_CAPACITY_UPPER_BOUND_UAH       (PACK_MAX_CAPACITY_MAH * 1200ul)  // 120% of nominal, in uAh
 
+// RTC standby wake timer: GCLK3 = ULP32K (~32kHz), RTC prescaler = DIV1024 → ~32 Hz
+// N days = N * 86400 seconds × 32 ticks/sec
+#define RTC_STANDBY_WAKE_TICKS  ((uint32_t)2 * (24UL * 60UL * 60UL) * 32UL)
+
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
 -----------------------------------------------------------------------------*/
@@ -68,6 +72,8 @@ static uint16_t charge_pause_counter = 0;
 static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
 static bool process_bms_interrupt = false;
+static volatile bool rtc_wakeup_flag = false;
+static struct rtc_module rtc_instance;
 
 extern volatile struct eeprom_data eeprom_data;
 
@@ -111,6 +117,8 @@ static void    bms_handle_charging(void);
 static void    bms_handle_charger_unplugged(void);
 static void    bms_enter_standby(void);
 static void    bms_leave_standby(void);
+static void    rtc_standby_timer_start(void);
+static void    rtc_standby_timer_stop(void);
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
@@ -619,8 +627,8 @@ static bool bms_is_pack_full(void)
 {
   uint16_t *cell_voltages = bq7693_get_cell_voltages();
 
-  // Use hysteresis: only apply the lower release threshold when already in NOT_CHARGING state
-  uint16_t threshold = (bms_state == BMS_CHARGER_CONNECTED)
+  // Use hysteresis: apply the lower release threshold when pack was already full
+  uint16_t threshold = (bms_state == BMS_CHARGER_CONNECTED || bms_state == BMS_CHARGER_CONNECTED_NOT_CHARGING)
                      ? CELL_FULL_CHARGE_RELEASE_VOLTAGE // 4100mV
                      : CELL_FULL_CHARGE_VOLTAGE;        // 4170mV
 
@@ -840,8 +848,9 @@ static void bms_handle_charger_connected_not_charging(void)
       bms_state = BMS_IDLE;
       return;
     }
-    else if(dsn_prot_get_sleep_flag() == true || dsn_prot_get_vacuum_connected() == false)
+    else if(dsn_prot_get_sleep_flag() == true)
     {
+      rtc_standby_timer_start();
       bms_enter_standby();
       serial_debug_send_message("BMS_STANDBY\r\n");
       leds_blink_leds_num(LEDS_NUM, 4, 100);
@@ -851,10 +860,33 @@ static void bms_handle_charger_connected_not_charging(void)
       system_sleep(); // WFI
 
       bms_leave_standby();
+      rtc_standby_timer_stop();
 
-      // reset protocol state machine, wait for handshake
-      dsn_prot_reset();
-      leds_blink_leds_num(LEDS_NUM, 2, 100);
+      // check if pack needs top-up charging on any wakeup
+      if (!bms_is_pack_full())
+      {
+        serial_debug_send_message("BMS:WAKE resuming charge\r\n");
+        rtc_wakeup_flag = false;
+        bms_state = BMS_CHARGER_CONNECTED;
+        return;
+      }
+
+      if (rtc_wakeup_flag)
+      {
+        rtc_wakeup_flag = false;
+        serial_debug_send_message("BMS:RTC_WAKE\r\n");
+      }
+      else
+      {
+        serial_debug_send_message("BMS:EIC_WAKE\r\n");
+        dsn_prot_reset();
+        leds_blink_leds_num(LEDS_NUM, 2, 100);
+      }
+    }
+    else if(dsn_prot_get_vacuum_connected() == false)
+    {
+      bms_state = BMS_SLEEP;
+      return;
     }
     sw_timer_delay_ms(100);
   }
@@ -1075,6 +1107,41 @@ static void bms_handle_charger_unplugged(void)
   bms_state = BMS_IDLE;
 }
 
+/** @brief RTC callback - sets wakeup flag and generates interrupt that wakes from standby. */
+static void rtc_wakeup_callback(void)
+{
+  rtc_wakeup_flag = true;
+}
+
+/** @brief Configure RTC as a cyclic standby wakeup timer (STANDBY_WAKE_INTERVAL_DAYS). */
+static void rtc_standby_timer_start(void)
+{
+  struct rtc_count_config config;
+
+  rtc_count_get_config_defaults(&config);
+  config.prescaler         = RTC_COUNT_PRESCALER_DIV_1024;
+  config.mode              = RTC_COUNT_MODE_32BIT;
+  config.clear_on_match    = true;
+  config.compare_values[0] = RTC_STANDBY_WAKE_TICKS;
+
+  rtc_count_init(&rtc_instance, RTC, &config);
+
+  rtc_count_register_callback(&rtc_instance, rtc_wakeup_callback,
+                              RTC_COUNT_CALLBACK_COMPARE_0);
+  rtc_count_enable_callback(&rtc_instance, RTC_COUNT_CALLBACK_COMPARE_0);
+
+  rtc_wakeup_flag = false;
+
+  rtc_count_enable(&rtc_instance);
+}
+
+/** @brief Stop and disable the RTC standby wakeup timer. */
+static void rtc_standby_timer_stop(void)
+{
+  rtc_count_disable_callback(&rtc_instance, RTC_COUNT_CALLBACK_COMPARE_0);
+  rtc_count_disable(&rtc_instance);
+}
+
 /** @brief Switch EIC to low-power oscillator and enable wakeup interrupts for standby. */
 static void bms_enter_standby(void)
 {
@@ -1094,13 +1161,6 @@ static void bms_enter_standby(void)
   system_gclk_chan_enable(EIC_GCLK_ID);
   /* 5) Start EIC again */
   _extint_enable();
-
-  // clear pending flags before enabling wakeup callbacks,
-  // otherwise a stale edge (e.g. charger plug-in) fires immediately
-  // and WFI returns without actually entering standby
-  extint_chan_clear_detected(9);
-  extint_chan_clear_detected(4);
-  extint_chan_clear_detected(6);
 
   // enable callbacks, need to wakeup the mcu
   extint_chan_enable_callback(9, EXTINT_CALLBACK_TYPE_DETECT);  // MODE_BUTTON            EXTINT 9 - PA09

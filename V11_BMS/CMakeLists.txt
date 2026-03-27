@@ -90,6 +90,7 @@ add_compile_definitions(
     USART_CALLBACK_MODE=true
     TC_ASYNC=true
     WDT_CALLBACK_MODE=true
+    RTC_COUNT_ASYNC=true
 )
 
 # -----------------------------------------------------------------------------
@@ -146,6 +147,7 @@ include_directories(
     src/ASF/sam0/drivers/adc
     src/ASF/sam0/drivers/adc/adc_sam_d_r_h
     src/ASF/sam0/drivers/nvm
+    src/ASF/sam0/drivers/rtc
     src/ASF/sam0/drivers/tc
     src/ASF/sam0/drivers/wdt
     src/ASF/sam0/services/eeprom/emulator/main_array

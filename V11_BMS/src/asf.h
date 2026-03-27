@@ -87,6 +87,10 @@
 // From module: PORT - GPIO Pin Control
 #include <port.h>
 
+// From module: RTC - Real Time Counter in count mode (Callback APIs)
+#include <rtc_count.h>
+#include <rtc_count_interrupt.h>
+
 // From module: Part identification macros
 #include <parts.h>
 
