@@ -97,7 +97,8 @@
 // Protocol timing
 #define TX_WAIT_TICKS           (10 / SW_TIMER_TICK_MS)
 #define SESSION_TIMEOUT_MS      2000
-#define RX_TIMEOUT_MS           5      
+#define RX_TIMEOUT_MS           5
+#define HANDSHAKE_TIMEOUT_MS    3000
 
 // TLV pair IDs used in analyze_frame response logic
 #define PAIR_TLV_READ           0x1002
@@ -140,6 +141,7 @@ typedef enum
 {
   DSN_INIT,
   DSN_IDLE,
+  DSN_WAIT_HANDSHAKE,
   DSN_WAIT_FRAME,
   DSN_TX_FRAME,
   DSN_WAIT_TX,
@@ -183,6 +185,9 @@ static bool        vacuum_connected;
 static uint32_t    last_motor_speed;
 static bool        pending_sleep;
 static bool        charger_at_sleep;   // latch charger state when entering DSN_SLEEP
+static sw_timer    handshake_timer;
+static bool        frames_seen; 
+static bool        handshake_key_seen;
 
 //-----------------------------------------------------------------------------
 //    DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
@@ -273,11 +278,14 @@ void dsn_prot_mainloop(void)
       rx_state  = RX_INIT;
       sleep_flag       = false;
       vacuum_connected = false;
+      frames_seen = false;
       sw_timer_start(&session_timer);
-      dsn_state = DSN_WAIT_FRAME;
+      sw_timer_start(&handshake_timer);
+      dsn_state = DSN_WAIT_HANDSHAKE;
       break;
 
     //------------------------------------------------------------------------
+    case DSN_WAIT_HANDSHAKE:
     case DSN_WAIT_FRAME:
     {
       uint8_t ch;
@@ -286,6 +294,8 @@ void dsn_prot_mainloop(void)
       {
         if (rx_byte_handler(ch))
         {
+          frames_seen = true;
+
           if (process_rx_frame())
           {
             sw_timer_start(&wait_timer);
@@ -295,6 +305,18 @@ void dsn_prot_mainloop(void)
           rx_state = RX_RECEIVING;
           break;
         }
+      }
+
+      // Handshake timeout: frames on bus but no handshake key -> power cycle
+      if (   !vacuum_connected
+          && frames_seen
+          && sw_timer_is_elapsed(&handshake_timer, HANDSHAKE_TIMEOUT_MS))
+      {
+        DSN_PRINT("PROT:HS_TIMEOUT, power cycling vacuum\r\n");
+        port_pin_set_output_level(PRECHARGE_PIN, false);
+        port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
+        delay_ms(500);
+        dsn_state = DSN_INIT;
       }
       break;
     }
@@ -319,9 +341,16 @@ void dsn_prot_mainloop(void)
         pending_sleep = false;
         handle_sleep();
       }
-      else
+      else if (vacuum_connected)
       {
         dsn_state = DSN_WAIT_FRAME;
+      }
+      else
+      {
+        // restart handshake timer and clear frames_seen
+        frames_seen = false;
+        sw_timer_start(&handshake_timer);
+        dsn_state = DSN_WAIT_HANDSHAKE;
       }
       break;
 
@@ -590,11 +619,7 @@ static bool process_rx_frame(void)
   // Reset session timer on any valid frame addressed to us
   sw_timer_start(&session_timer);
 
-  if (!vacuum_connected)
-  {
-    DSN_PRINT("PROT:HS\r\n");
-  }
-  vacuum_connected = true;
+  // handshake_key_seen is checked after analyze_frame() below
 
   // Extract header fields
   req_class = rx_buf[OFF_CLASS];  // 0x02 = data req, 0x03 = control req
@@ -615,8 +640,18 @@ static bool process_rx_frame(void)
   ctx.out_ptr       = &tx_buf[OFF_PAYLOAD];
   ctx.out_remaining = MAX_RESPONSE_PAYLOAD;
 
+  // Clear handshake key flag before processing
+  handshake_key_seen = false;
+
   // Run the TLV frame analyzer
   resp_payload_len = analyze_frame(&ctx, req_class);
+
+  // Complete handshake when the startup-only key (TLV_MAX_PACK_V) was queried
+  if (!vacuum_connected && handshake_key_seen)
+  {
+    DSN_PRINT("PROT:HS\r\n");
+    vacuum_connected = true;
+  }
 
   if (resp_payload_len == 0)
   {
@@ -928,6 +963,7 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
       val = V11_BATTERY_TYPE;
       HTOLE16(out_data, val);
       *out_len = 2;
+      handshake_key_seen = true;
       return true;
 
     //--- 4-byte registers ---
