@@ -580,7 +580,10 @@ static bool process_rx_frame(void)
   // Reject discovery broadcasts (SRC=0xFF) and other unknown sources.
   if (rx_buf[OFF_SRC] != 0x01)
   {
-    DSN_PRINT("RX:BAD_SRC 0x%02X\r\n", rx_buf[OFF_SRC]);
+    if (rx_buf[OFF_SRC] != 0xFF)
+    { // Broadcast frames (SRC=0xFF) are now silently dropped 
+      DSN_PRINT("RX:BAD_SRC 0x%02X\r\n", rx_buf[OFF_SRC]);
+    }
     return false;
   }
 
