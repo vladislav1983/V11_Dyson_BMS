@@ -693,6 +693,15 @@ static void bms_handle_idle(void)
 /** @brief Trigger pulled: verify safety then transition to discharge or fault. */
 static void bms_handle_trigger_pulled(void)
 {
+  // Discharge FET is off — clear any stale SCD/OCD flags from power-up transients
+  // before the safety check. Real faults will re-trigger once the FET is enabled.
+  uint8_t sys_stat;
+  bq7693_read_register(SYS_STAT, 1, &sys_stat);
+  if (sys_stat & 0x03)  // OCD or SCD
+  {
+    bq7693_write_register(SYS_STAT, sys_stat & 0x03);
+  }
+
   //Check if it's safe to discharge or not.
   if (bms_is_safe_to_discharge())
   {
@@ -762,6 +771,15 @@ static void bms_handle_discharging(void)
       //A fault has occurred.
       bq7693_disable_discharge();
       bms_state = BMS_FAULT;
+      return;
+    }
+
+    if (!dsn_prot_get_vacuum_connected())
+    {
+      dsn_prot_set_trigger(false);
+      bq7693_disable_discharge();
+      leds_off();
+      bms_state = BMS_IDLE;
       return;
     }
 
