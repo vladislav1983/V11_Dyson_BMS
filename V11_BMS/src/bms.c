@@ -628,9 +628,9 @@ static bool bms_is_pack_full(void)
   uint16_t *cell_voltages = bq7693_get_cell_voltages();
 
   // Use hysteresis: apply the lower release threshold when pack was already full
-  uint16_t threshold = (bms_state == BMS_CHARGER_CONNECTED || bms_state == BMS_CHARGER_CONNECTED_NOT_CHARGING)
-                     ? CELL_FULL_CHARGE_RELEASE_VOLTAGE // 4100mV
-                     : CELL_FULL_CHARGE_VOLTAGE;        // 4170mV
+  uint16_t threshold = (bms_state == BMS_CHARGING)
+                     ? CELL_FULL_CHARGE_VOLTAGE          // 4170mV
+                     : CELL_FULL_CHARGE_RELEASE_VOLTAGE; // 4100mV
 
   for (int i=0; i<7; ++i)
   {
@@ -899,6 +899,8 @@ static void bms_handle_charger_connected_not_charging(void)
         serial_debug_send_message("BMS:EIC_WAKE\r\n");
         dsn_prot_reset();
         leds_blink_leds_num(LEDS_NUM, 2, 100);
+        bms_state = BMS_IDLE;
+        return;
       }
     }
     else if(dsn_prot_get_vacuum_connected() == false)
