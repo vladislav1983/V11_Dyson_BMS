@@ -880,12 +880,10 @@ static void bms_handle_charger_connected_not_charging(void)
       bms_leave_standby();
       rtc_standby_timer_stop();
 
-      // check if pack needs top-up charging on any wakeup
-      if (!bms_is_pack_full())
+      // charger unplugged during standby
+      if (!dio_read(DIO_CHARGER_CONNECTED))
       {
-        serial_debug_send_message("BMS:WAKE resuming charge\r\n");
-        rtc_wakeup_flag = false;
-        bms_state = BMS_CHARGER_CONNECTED;
+        bms_state = BMS_IDLE;
         return;
       }
 
@@ -899,16 +897,19 @@ static void bms_handle_charger_connected_not_charging(void)
         serial_debug_send_message("BMS:EIC_WAKE\r\n");
         dsn_prot_reset();
         leds_blink_leds_num(LEDS_NUM, 2, 100);
-        bms_state = BMS_IDLE;
+        // add some time for vacuum to connect
+        sw_timer_delay_ms(250);
+      }
+
+      // check if pack needs top-up charging on any wakeup
+      if (!bms_is_pack_full())
+      {
+        bms_state = BMS_CHARGER_CONNECTED;
         return;
       }
     }
-    else if(dsn_prot_get_vacuum_connected() == false)
-    {
-      bms_state = BMS_SLEEP;
-      return;
-    }
-    sw_timer_delay_ms(100);
+
+    sw_timer_delay_ms(250);
   }
 }
 
