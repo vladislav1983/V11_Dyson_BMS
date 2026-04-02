@@ -48,9 +48,9 @@ volatile bool     force_sleep = false;
 #define ROUND(x) (((x) + 0.5))
 #define PACK_CAPACITY_UPPER_BOUND_UAH       (PACK_MAX_CAPACITY_MAH * 1200ul)  // 120% of nominal, in uAh
 
-// RTC standby wake timer: GCLK3 = ULP32K (~32kHz), RTC prescaler = DIV1024 → ~32 Hz
-// N days = N * 86400 seconds × 32 ticks/sec
-#define RTC_STANDBY_WAKE_TICKS  ((uint32_t)2 * (24UL * 60UL * 60UL) * 32UL)
+// RTC standby wake timer: GCLK2 = ULP32K/32 (1024 Hz), RTC prescaler = DIV1024 → 1 Hz
+// N days = N * 86400 seconds × 1 tick/sec
+#define RTC_STANDBY_WAKE_TICKS  ((uint32_t)2 * (24UL * 60UL * 60UL))
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
@@ -117,6 +117,7 @@ static void    bms_handle_charging(void);
 static void    bms_handle_charger_unplugged(void);
 static void    bms_enter_standby(void);
 static void    bms_leave_standby(void);
+static void    rtc_standby_timer_init(void);
 static void    rtc_standby_timer_start(void);
 static void    rtc_standby_timer_stop(void);
 
@@ -152,6 +153,9 @@ void bms_init(void)
 
   //Enable interrupts
   interrupts_init();
+
+  //Initialise RTC for standby wakeup (one-time config)
+  rtc_standby_timer_init();
 
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
   serial_debug_init();
@@ -880,13 +884,6 @@ static void bms_handle_charger_connected_not_charging(void)
       bms_leave_standby();
       rtc_standby_timer_stop();
 
-      // charger unplugged during standby
-      if (!dio_read(DIO_CHARGER_CONNECTED))
-      {
-        bms_state = BMS_IDLE;
-        return;
-      }
-
       if (rtc_wakeup_flag)
       {
         rtc_wakeup_flag = false;
@@ -1134,8 +1131,8 @@ static void rtc_wakeup_callback(void)
   rtc_wakeup_flag = true;
 }
 
-/** @brief Configure RTC as a cyclic standby wakeup timer (STANDBY_WAKE_INTERVAL_DAYS). */
-static void rtc_standby_timer_start(void)
+/** @brief One-time RTC init: configure peripheral and register callback. */
+static void rtc_standby_timer_init(void)
 {
   struct rtc_count_config config;
 
@@ -1149,11 +1146,25 @@ static void rtc_standby_timer_start(void)
 
   rtc_count_register_callback(&rtc_instance, rtc_wakeup_callback,
                               RTC_COUNT_CALLBACK_COMPARE_0);
-  rtc_count_enable_callback(&rtc_instance, RTC_COUNT_CALLBACK_COMPARE_0);
+}
 
+/** @brief Start the RTC standby wakeup timer (reset count and enable). */
+static void rtc_standby_timer_start(void)
+{
+  rtc_count_set_count(&rtc_instance, 0);
   rtc_wakeup_flag = false;
 
+  // Clear any stale compare-match flag and NVIC pending bit.
+  // rtc_count_disable() does NOT clear the NVIC pending bit, so a leftover
+  // pending RTC IRQ would fire the moment system_interrupt_enable() runs
+  // inside rtc_count_enable(), setting rtc_wakeup_flag before standby.
+  RTC->MODE0.INTFLAG.reg = RTC_MODE0_INTFLAG_MASK;
+  NVIC_ClearPendingIRQ(RTC_IRQn);
+
+  rtc_count_enable_callback(&rtc_instance, RTC_COUNT_CALLBACK_COMPARE_0);
   rtc_count_enable(&rtc_instance);
+  // wait for ENABLE write to sync across clock domains before entering standby
+  while (RTC->MODE0.STATUS.reg & RTC_STATUS_SYNCBUSY);
 }
 
 /** @brief Stop and disable the RTC standby wakeup timer. */
