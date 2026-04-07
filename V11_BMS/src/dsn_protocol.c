@@ -239,6 +239,7 @@ void dsn_prot_reset(void)
   dsn_state        = DSN_INIT;
   sleep_flag       = false;
   vacuum_connected = false;
+  pending_sleep    = false;
 }
 
 /**
@@ -336,7 +337,7 @@ void dsn_prot_mainloop(void)
       rx_level = 0;
       rx_state = RX_INIT;
       
-      if (pending_sleep)
+      if (pending_sleep && vacuum_connected)
       {
         pending_sleep = false;
         handle_sleep();
@@ -347,6 +348,8 @@ void dsn_prot_mainloop(void)
       }
       else
       {
+        // discard sleep request received before handshake completes
+        pending_sleep = false;
         // restart handshake timer and clear frames_seen
         frames_seen = false;
         sw_timer_start(&handshake_timer);
