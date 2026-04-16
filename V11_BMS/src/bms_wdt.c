@@ -11,6 +11,7 @@
 #include "bms_wdt.h"
 #include "sw_timer.h"
 #include "bq7693.h"
+#include "bms.h"
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL VARIABLES
@@ -27,7 +28,7 @@
 /*-----------------------------------------------------------------------------
     DECLARATION OF LOCAL MACROS/#DEFINES
 -----------------------------------------------------------------------------*/
-#define WDT_TIMER_MS                  100
+#define WDT_TIMER_MS                  250
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL TYPES
@@ -62,9 +63,9 @@ void bms_wdt_init(void)
 	struct wdt_conf config_wdt;
 
 	wdt_get_config_defaults(&config_wdt);
-  config_wdt.clock_source         = GCLK_GENERATOR_3;
-	config_wdt.timeout_period       = WDT_PERIOD_16384CLK;
-	config_wdt.early_warning_period = WDT_PERIOD_16384CLK;
+    config_wdt.clock_source         = GCLK_GENERATOR_2;
+	config_wdt.timeout_period       = WDT_PERIOD_1024CLK;
+	config_wdt.early_warning_period = WDT_PERIOD_512CLK;
 	wdt_set_config(&config_wdt);
 
   wdt_register_callback(bms_wdt_early_warning_callback, WDT_CALLBACK_EARLY_WARNING);
@@ -114,8 +115,7 @@ void bms_wdt_mainloop(void)
  */
 static void bms_wdt_early_warning_callback(void)
 {
-  bq7693_disable_charge();
-  bq7693_disable_discharge();
+  bms_force_fault(BMS_ERR_WDT);
 }
 
 /*-----------------------------------------------------------------------------
