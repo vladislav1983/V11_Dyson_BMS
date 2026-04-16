@@ -89,16 +89,16 @@
                                  (buf)[3] = (uint8_t)((val) >> 24); } while(0)
 
 // Buffer sizes
-#define RX_BUF_SIZE             80
-#define TX_BUF_SIZE             96
-#define MAX_RESPONSE_FRAME      80     // max response frame (SIZE+3)
-#define MAX_RESPONSE_PAYLOAD    65     // max payload bytes in response
+#define RX_BUF_SIZE             128
+#define TX_BUF_SIZE             160
+#define MAX_RESPONSE_FRAME      140    // max response frame (SIZE+3)
+#define MAX_RESPONSE_PAYLOAD    120    // max payload bytes in response
 
 // Protocol timing
 #define TX_WAIT_TICKS           (10 / SW_TIMER_TICK_MS)
 #define SESSION_TIMEOUT_MS      2000
 #define RX_TIMEOUT_MS           5
-#define HANDSHAKE_TIMEOUT_MS    3000
+#define MOTOR_SPEED_WDT_MS      2000
 
 // TLV pair IDs used in analyze_frame response logic
 #define PAIR_TLV_READ           0x1002
@@ -117,6 +117,7 @@
 #define TLV_MAX_PACK_V          0x8115   // 2 bytes: max pack voltage mV
 #define TLV_BATTERY_TYPE        0x8102   // 2 bytes: battery type ID
 #define TLV_FULL_CHARGE_CAP     0x0201   // 4 bytes: capacity in 0.01 mAh
+#define TLV_WAKEUP_SOURCE       0x810A   // 1 byte: wakeup source
 
 // Handshake configuration
 #define HANDSHAKE_NUM_CELLS     7
@@ -185,9 +186,11 @@ static bool        vacuum_connected;
 static uint32_t    last_motor_speed;
 static bool        pending_sleep;
 static bool        charger_at_sleep;   // latch charger state when entering DSN_SLEEP
-static sw_timer    handshake_timer;
-static bool        frames_seen; 
+static sw_timer    motor_speed_timer;
+static bool        frames_seen;
+static bool        motor_speed_seen;
 static bool        handshake_key_seen;
+static uint32_t    wakeup_source;
 
 //-----------------------------------------------------------------------------
 //    DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
@@ -222,6 +225,9 @@ void dsn_prot_init(void)
   vacuum_connected = false;
   last_motor_speed = 0;
   pending_sleep    = false;
+  motor_speed_seen = false;
+  frames_seen      = false;
+  wakeup_source    = 0;
 }
 
 /**
@@ -231,6 +237,8 @@ void dsn_prot_init(void)
 void dsn_prot_set_trigger(bool state)
 {
   trigger_state = state;
+  if (state)
+    pending_sleep = false;
 }
 
 /** @brief Reset protocol to initial state. */
@@ -240,6 +248,8 @@ void dsn_prot_reset(void)
   sleep_flag       = false;
   vacuum_connected = false;
   pending_sleep    = false;
+  motor_speed_seen = false;
+  frames_seen      = false;
 }
 
 /**
@@ -280,8 +290,9 @@ void dsn_prot_mainloop(void)
       sleep_flag       = false;
       vacuum_connected = false;
       frames_seen = false;
+      motor_speed_seen = false;
       sw_timer_start(&session_timer);
-      sw_timer_start(&handshake_timer);
+      sw_timer_start(&motor_speed_timer);
       dsn_state = DSN_WAIT_HANDSHAKE;
       break;
 
@@ -308,12 +319,12 @@ void dsn_prot_mainloop(void)
         }
       }
 
-      // Handshake timeout: frames on bus but no handshake key -> power cycle
-      if (   !vacuum_connected
-          && frames_seen
-          && sw_timer_is_elapsed(&handshake_timer, HANDSHAKE_TIMEOUT_MS))
+      // Motor speed watchdog: if we previously received motor speed
+      // but it stopped arriving, the vacuum is stuck — power cycle it
+      if (   motor_speed_seen
+          && sw_timer_is_elapsed(&motor_speed_timer, MOTOR_SPEED_WDT_MS))
       {
-        DSN_PRINT("PROT:HS_TIMEOUT, power cycling vacuum\r\n");
+        DSN_PRINT("PROT:MS_WDT\r\n");
         port_pin_set_output_level(PRECHARGE_PIN, false);
         port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
         delay_ms(500);
@@ -337,7 +348,7 @@ void dsn_prot_mainloop(void)
       rx_level = 0;
       rx_state = RX_INIT;
       
-      if (pending_sleep && vacuum_connected)
+      if (pending_sleep && vacuum_connected && !trigger_state)
       {
         pending_sleep = false;
         handle_sleep();
@@ -350,9 +361,10 @@ void dsn_prot_mainloop(void)
       {
         // discard sleep request received before handshake completes
         pending_sleep = false;
-        // restart handshake timer and clear frames_seen
+        // restart motor speed watchdog and clear flags
         frames_seen = false;
-        sw_timer_start(&handshake_timer);
+        motor_speed_seen = false;
+        sw_timer_start(&motor_speed_timer);
         dsn_state = DSN_WAIT_HANDSHAKE;
       }
       break;
@@ -608,14 +620,23 @@ static bool process_rx_frame(void)
     return false;
   }
 
+  // Handle discovery broadcast (SRC=0xFF): extract payload, no response
+  if (rx_buf[OFF_SRC] == 0xFF)
+  {
+    payload_len = size - FRAME_HDR_OVERHEAD - 4;
+    if (payload_len >= 4)
+    {
+      const uint8_t *p = &rx_buf[OFF_PAYLOAD];
+      wakeup_source = LE32TOH(p);
+      DSN_PRINT("PROT:DISC 0x%08lX\r\n", wakeup_source);
+    }
+    return false;  // no TX for broadcasts
+  }
+
   // Accept SRC=0x01 (standard data) only.
-  // Reject discovery broadcasts (SRC=0xFF) and other unknown sources.
   if (rx_buf[OFF_SRC] != 0x01)
   {
-    if (rx_buf[OFF_SRC] != 0xFF)
-    { // Broadcast frames (SRC=0xFF) are now silently dropped 
-      DSN_PRINT("RX:BAD_SRC 0x%02X\r\n", rx_buf[OFF_SRC]);
-    }
+    DSN_PRINT("RX:BAD_SRC 0x%02X\r\n", rx_buf[OFF_SRC]);
     return false;
   }
 
@@ -872,6 +893,11 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       return true;
 
     //---------------------------------------------------------------------------------------------
+    // CONNECTION_ACK: [0x02 0x82] (no payload, no response)
+    case 0x8202:
+      return true;
+
+    //---------------------------------------------------------------------------------------------
     // MOTOR_SPEED: [0x00 0x82] [SPEED LE 4B] -> [0x01 0x82] [ACK_SPEED LE 4B] [0x00] [FLAGS]
     case 0x8200:
       if (in_ctx->in_remaining < 4)
@@ -882,6 +908,8 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       in_ctx->in_remaining -= 4;
 
       last_motor_speed = LE32TOH(in);
+      motor_speed_seen = true;
+      sw_timer_start(&motor_speed_timer);
 
       if (last_motor_speed == MOTOR_SPEED_OFF)
         pending_sleep = true;
@@ -925,6 +953,11 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
 
     case TLV_BMS_STATUS:  // 0x8106: BMS status byte
       out_data[0] = 0x01;  // 1 = OK
+      *out_len = 1;
+      return true;
+
+    case TLV_WAKEUP_SOURCE:  // 0x810A: wakeup source (from discovery)
+      out_data[0] = (uint8_t)wakeup_source;
       *out_len = 1;
       return true;
 
