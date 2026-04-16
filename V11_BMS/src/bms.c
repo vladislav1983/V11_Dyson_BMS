@@ -30,6 +30,7 @@ volatile bool     force_sleep = false;
 /*-----------------------------------------------------------------------------
     DECLARATION OF LOCAL FUNCTIONS
 -----------------------------------------------------------------------------*/
+static void bms_set_error(enum BMS_ERROR_CODE code);
 
 /*-----------------------------------------------------------------------------
     DECLARATION OF LOCAL MACROS/#DEFINES
@@ -160,7 +161,6 @@ void bms_init(void)
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
   serial_debug_init();
 #endif
-  bms_wdt_init();
 }
 
 /** @brief External interrupt callback for wakeup events (unused). */
@@ -274,6 +274,7 @@ uint32_t bms_get_runtime_seconds(void)
 /** @brief Main BMS state machine loop (never returns). */
 void bms_mainloop(void)
 {
+  bms_wdt_init();
   //Handle the state machinery.
   while (1)
   {
@@ -284,21 +285,19 @@ void bms_mainloop(void)
     //-----------------------------------------------------------------------
       case BMS_INIT:
         bms_state = BMS_IDLE;
-        port_pin_set_output_level(PRECHARGE_PIN, true);
-
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
         //Initial debug blurb
         serial_debug_send_message("Dyson V11/V15 BMS After market firmware\r\n");
 #endif
-
         leds_sequence();
+        wdt_reset_count();
 
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
         //Initial debug blurb
         serial_debug_send_cell_voltages();
         serial_debug_send_pack_capacity();
 #endif
-
+        wdt_reset_count();
       break;
       //-----------------------------------------------------------------------
       case BMS_IDLE:
@@ -352,6 +351,20 @@ void bms_mainloop(void)
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS
 -----------------------------------------------------------------------------*/
+/** @brief Set bms_error to code only if code is more severe than the current error. */
+static void bms_set_error(enum BMS_ERROR_CODE code)
+{
+  if (bms_error < code)
+    bms_error = code;
+}
+
+/** @brief Force the state machine into BMS_FAULT with the given error code. ISR-safe. */
+void bms_force_fault(enum BMS_ERROR_CODE code)
+{
+  bms_error = code;
+  bms_state = BMS_FAULT;
+}
+
 /** @brief Configure GPIO pins for charge control, sense inputs, and precharge. */
 static void pins_init(void)
 {
@@ -509,7 +522,7 @@ static bool bms_is_safe_to_discharge(void)
   {
     if (cell_voltages[i] < CELL_LOWEST_DISCHARGE_VOLTAGE)
     {
-      bms_error = BMS_ERR_PACK_DISCHARGED;
+      bms_set_error(BMS_ERR_PACK_DISCHARGED);
 
 #ifdef SERIAL_DEBUG
       BMS_PRINT("%s: Cell voltages too low\r\n", __FUNCTION__);
@@ -527,39 +540,44 @@ static bool bms_is_safe_to_discharge(void)
 
   if (temp  > MAX_PACK_TEMPERATURE)
   {
-    bms_error = BMS_ERR_PACK_OVERTEMP;
+    bms_set_error(BMS_ERR_PACK_OVERTEMP);
     BMS_PRINT("%s : Pack overtemp %d 'C, max %d\r\n",__FUNCTION__ ,  temp, MAX_PACK_TEMPERATURE);
   }
   else if (temp < MIN_PACK_DISCHARGE_TEMP)
   {
-    bms_error = BMS_ERR_PACK_UNDERTEMP;
+    bms_set_error(BMS_ERR_PACK_UNDERTEMP);
     BMS_PRINT("%s: Pack undertemp %d 'C, min %d\r\n", __FUNCTION__ , temp, MIN_PACK_DISCHARGE_TEMP);
   }
 
-  //Check sys_stat
+  //Check sys_stat — read once, clear all fault flags, then evaluate.
   uint8_t sys_stat;
   bq7693_read_register(SYS_STAT, 1, &sys_stat);
 
-  if (sys_stat & 0x01)
+  if (sys_stat & STAT_FLAGS)
   {
-    bms_error = BMS_ERR_OVERCURRENT;
-    bq7693_write_register(SYS_STAT, 0x01);
+    BMS_PRINT("%s: SYS_STAT=0x%02X\r\n", __FUNCTION__, sys_stat);
+    bq7693_write_register(SYS_STAT, sys_stat & STAT_FLAGS);
+  }
 
+  if (sys_stat & STAT_OCD)
+  {
+    bms_set_error(BMS_ERR_OVERCURRENT);
     BMS_PRINT("%s: BMS IC Overcurrent Trip\r\n", __FUNCTION__);
   }
-  else if (sys_stat & 0x02)
+  if (sys_stat & STAT_SCD)
   {
-    bms_error = BMS_ERR_SHORTCIRCUIT;
-    bq7693_write_register(SYS_STAT, 0x02);
-
+    bms_set_error(BMS_ERR_SHORTCIRCUIT);
     BMS_PRINT("%s: BMS IC Short Circuit Trip\r\n", __FUNCTION__);
   }
-  else if (sys_stat & 0x08)
+  if (sys_stat & STAT_UV)
   {
-    bms_error = BMS_ERR_UNDERVOLTAGE;
-    bq7693_write_register(SYS_STAT, 0x08);
-
+    bms_set_error(BMS_ERR_UNDERVOLTAGE);
     BMS_PRINT("%s: BMS IC Undervoltage Trip\r\n", __FUNCTION__);
+  }
+  if (sys_stat & STAT_OV)
+  {
+    bms_set_error(BMS_ERR_OVERVOLTAGE);
+    BMS_PRINT("%s: BMS IC Overvoltage Trip\r\n", __FUNCTION__);
   }
 
   if (bms_error == BMS_ERR_NONE)
@@ -584,7 +602,7 @@ static bool bms_is_safe_to_charge(void)
   {
     if ( cell_voltages[i] < CELL_LOWEST_CHARGE_VOLTAGE )
     {
-      bms_error = BMS_ERR_CELL_FAIL;
+      bms_set_error(BMS_ERR_CELL_FAIL);
       BMS_PRINT("%s: Cell %d below min charge voltage %d, min %d\r\n", __FUNCTION__, i, cell_voltages[i], CELL_LOWEST_CHARGE_VOLTAGE);
     }
   }
@@ -595,25 +613,32 @@ static bool bms_is_safe_to_charge(void)
 
   if (temp  > MAX_PACK_TEMPERATURE)
   {
-    bms_error = BMS_ERR_PACK_OVERTEMP;
+    bms_set_error(BMS_ERR_PACK_OVERTEMP);
   }
   else if (temp < MIN_PACK_CHARGE_TEMP)
   {
-    bms_error = BMS_ERR_PACK_UNDERTEMP;
+    bms_set_error(BMS_ERR_PACK_UNDERTEMP);
   }
 
-  //Check sys_stat
+  //Check sys_stat — read once, clear all fault flags, then evaluate.
   uint8_t sys_stat;
   bq7693_read_register(SYS_STAT, 1, &sys_stat);
 
-  if (sys_stat & 0x01)
+  if (sys_stat & STAT_FLAGS)
   {
-    bms_error = BMS_ERR_OVERCURRENT;
+    BMS_PRINT("%s: SYS_STAT=0x%02X\r\n", __FUNCTION__, sys_stat);
+    bq7693_write_register(SYS_STAT, sys_stat & STAT_FLAGS);
+  }
+
+  if (sys_stat & STAT_OCD)
+  {
+    bms_set_error(BMS_ERR_OVERCURRENT);
     bq7693_write_register(SYS_STAT, 0x01);
   }
-  else if (sys_stat & 0x04)
+
+  if (sys_stat & STAT_OV)
   {
-    bms_error = BMS_ERR_OVERVOLTAGE;
+    bms_set_error(BMS_ERR_OVERVOLTAGE);
     bq7693_write_register(SYS_STAT, 0x04);
   }
 
@@ -651,11 +676,32 @@ static bool bms_is_pack_full(void)
 static void bms_handle_idle(void)
 {
   uint32_t sleep_time;
+  bool vacuum_was_connected = false;
+  bool trigger_was_pressed  = false;
+
   sw_timer_start(&bms_timer);
 
   do
   {
-    if(true == dsn_prot_get_vacuum_connected())
+    bool vacuum_connected = dsn_prot_get_vacuum_connected();
+    bool trigger_pressed  = (dio_read(DIO_TRIGGER_PRESSED) == true);
+
+    // Track vacuum connect/disconnect transitions to drive the discharge FET.
+    if (vacuum_connected && !vacuum_was_connected)
+    {
+      if (bms_is_safe_to_discharge())
+      {
+        sw_timer_delay_ms(300);
+        bq7693_enable_discharge();
+      }
+    }
+    else if (!vacuum_connected && vacuum_was_connected)
+    {
+      bq7693_disable_discharge();
+    }
+    vacuum_was_connected = vacuum_connected;
+
+    if(true == vacuum_connected)
     {
       sleep_time = (IDLE_TIME * 1000ul);
     }
@@ -669,11 +715,16 @@ static void bms_handle_idle(void)
       bms_state = BMS_CHARGER_CONNECTED;
       return;
     }
-    else if (dio_read(DIO_TRIGGER_PRESSED) == true)
+    else if (trigger_pressed)
     {
-      leds_blink_leds(10);
-      bms_state = BMS_TRIGGER_PULLED;
-      return;
+      if (!trigger_was_pressed)
+        leds_blink_leds(10);
+        
+      if (vacuum_connected)
+      {
+        bms_state = BMS_TRIGGER_PULLED;
+        return;
+      }
     }
     else if(force_sleep == true)
     {
@@ -683,9 +734,11 @@ static void bms_handle_idle(void)
     {
       sw_timer_stop(&bms_timer); // go to sleep requested by cleaner
     }
+    trigger_was_pressed = trigger_pressed;
 
 
     sw_timer_delay_ms(50);
+    wdt_reset_count();
 
   } while (false == sw_timer_is_elapsed(&bms_timer, sleep_time));
 
@@ -709,7 +762,6 @@ static void bms_handle_trigger_pulled(void)
   //Check if it's safe to discharge or not.
   if (bms_is_safe_to_discharge())
   {
-    //All go - unleash the power!
     bms_state = BMS_DISCHARGING;
   }
   else
@@ -750,9 +802,6 @@ static void bms_handle_discharging(void)
 
   if (bms_is_safe_to_discharge())
   {
-    //Sanity check, hopefully already checked prior to here!
-    bq7693_enable_discharge();
-    sw_timer_delay_ms(300);
     dsn_prot_set_trigger(true);
   }
 
@@ -761,10 +810,6 @@ static void bms_handle_discharging(void)
     if (!dio_read(DIO_TRIGGER_PRESSED))
     {
       dsn_prot_set_trigger(false);
-      sw_timer_delay_ms(300);
-      //Trigger released.
-      bq7693_disable_discharge();
-      //Clear the battery status etc.
       leds_off();
       bms_state = BMS_IDLE;
       return;
@@ -773,7 +818,7 @@ static void bms_handle_discharging(void)
     if (!bms_is_safe_to_discharge())
     {
       //A fault has occurred.
-      bq7693_disable_discharge();
+      dsn_prot_set_trigger(false);
       bms_state = BMS_FAULT;
       return;
     }
@@ -781,7 +826,6 @@ static void bms_handle_discharging(void)
     if (!dsn_prot_get_vacuum_connected())
     {
       dsn_prot_set_trigger(false);
-      bq7693_disable_discharge();
       leds_off();
       bms_state = BMS_IDLE;
       return;
@@ -803,6 +847,8 @@ static void bms_handle_discharging(void)
 /** @brief Fault: display error via LEDs, wait for user action. */
 static void bms_handle_fault(void)
 {
+  eeprom_write();
+
   //Turn all the LEDs off.
   leds_off();
   dsn_prot_set_trigger(false);
@@ -828,9 +874,11 @@ static void bms_handle_fault(void)
       for (int i=0; i < bms_error; ++i)
       {
         leds_blink_leds(500);
+        wdt_reset_count();
       }
 
       sw_timer_delay_ms(2000);
+      wdt_reset_count();
     }
   }
   while (dio_read(DIO_TRIGGER_PRESSED) || dio_read(DIO_CHARGER_CONNECTED));
@@ -1019,6 +1067,7 @@ static void bms_handle_charging(void)
       for (int i=0; i<30; ++i)
       {
         sw_timer_delay_ms(1000);
+        wdt_reset_count();
         //If it has, abandon the charge process and return to main loop
         if (!dio_read(DIO_CHARGER_CONNECTED))
         {

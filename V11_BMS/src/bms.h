@@ -41,16 +41,17 @@ enum BMS_STATE
 
 enum BMS_ERROR_CODE
 {
-  BMS_ERR_NONE,            //All good!
-  BMS_ERR_PACK_OVERTEMP,   //Pack thermistor reading exceeded MAX_PACK_TEMPERATURE - default 60'C
-  BMS_ERR_PACK_UNDERTEMP,  //Pack is below -40 if attempting discharge, or -0 if attempting charge.
-  BMS_ERR_CELL_FAIL,       //A cell voltage is below safe minimum.
-  BMS_ERR_SHORTCIRCUIT,    //BMS detected short circuit
-  BMS_ERR_OVERCURRENT,     //BMS detected overcurrent fault
-  BMS_ERR_OVERVOLTAGE,     //BMS detected overvoltage state
-  BMS_ERR_I2C_FAIL,        //Unable to talk to the BQ7693 IC - very bad!
-  BMS_ERR_PACK_DISCHARGED, //Pack is flat - not really a bad error....
-  BMS_ERR_UNDERVOLTAGE,    //BMS detected undervoltage state - flat pack, but detected by the BQ.
+  BMS_ERR_NONE,            // 0  All good!
+  BMS_ERR_PACK_DISCHARGED, // 1  Pack is flat - not really a bad error....
+  BMS_ERR_UNDERVOLTAGE,    // 2  BMS IC undervoltage trip - flat pack, detected by BQ.
+  BMS_ERR_PACK_UNDERTEMP,  // 3  Pack is below -40 if attempting discharge, or 0 if attempting charge.
+  BMS_ERR_PACK_OVERTEMP,   // 4  Pack thermistor reading exceeded MAX_PACK_TEMPERATURE - default 60'C
+  BMS_ERR_CELL_FAIL,       // 5  A cell voltage is below safe minimum.
+  BMS_ERR_OVERVOLTAGE,     // 6  BMS IC overvoltage trip
+  BMS_ERR_OVERCURRENT,     // 7  BMS IC overcurrent trip
+  BMS_ERR_SHORTCIRCUIT,    // 8  BMS IC short circuit trip
+  BMS_ERR_I2C_FAIL,        // 9  Unable to talk to the BQ7693 IC - very bad!
+  BMS_ERR_WDT,             // 10 Watchdog early warning fired - main loop stalled!
 };
 
 /*-----------------------------------------------------------------------------
@@ -70,6 +71,7 @@ enum BMS_ERROR_CODE
 -----------------------------------------------------------------------------*/
  extern void bms_init(void);
  extern void bms_mainloop(void);
+ extern void bms_force_fault(enum BMS_ERROR_CODE code);
  extern uint16_t bms_get_soc_x100(void);
  extern uint32_t bms_get_runtime_seconds(void);
  extern void bms_wakeup_interrupt_callback(void);
