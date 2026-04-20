@@ -672,7 +672,6 @@ static void bms_handle_idle(void)
     bool vacuum_connected = dsn_prot_get_vacuum_connected();
     bool trigger_pressed  = (dio_read(DIO_TRIGGER_PRESSED) == true);
 
-    // Track vacuum connect/disconnect transitions to drive the discharge FET.
     if (vacuum_connected && !vacuum_was_connected)
     {
       if (bms_is_safe_to_discharge())
@@ -680,10 +679,6 @@ static void bms_handle_idle(void)
         sw_timer_delay_ms(300);
         bq7693_enable_discharge();
       }
-    }
-    else if (!vacuum_connected && vacuum_was_connected)
-    {
-      bq7693_disable_discharge();
     }
     vacuum_was_connected = vacuum_connected;
 
@@ -704,8 +699,11 @@ static void bms_handle_idle(void)
     else if (trigger_pressed)
     {
       if (!trigger_was_pressed)
+      {
         leds_blink_leds(10);
-        
+        sw_timer_start(&bms_timer);
+      }
+
       if (vacuum_connected)
       {
         bms_state = BMS_VACUUM_RUNNING;
@@ -763,30 +761,28 @@ static void bms_handle_vacuum_running(void)
   uint8_t debug_print_cnt = 0;
 #endif
 
-  if (bms_is_safe_to_discharge())
+  // Entry-side safety: if unsafe, route to FAULT immediately so the fault
+  // handler can do capacity learning. Previously the unsafe verdict was
+  // silently dropped and the in-loop recheck could see cells recover once
+  // the motor coasted down.
+  if (!bms_is_safe_to_discharge())
   {
-    dsn_prot_set_trigger(true);
+    dsn_prot_set_trigger(false);
+    bms_state = BMS_FAULT;
+    return;
   }
+  dsn_prot_set_trigger(true);
 
   while (1)
   {
-    if (!dio_read(DIO_TRIGGER_PRESSED))
-    {
-      dsn_prot_set_trigger(false);
-      leds_off();
-      bms_state = BMS_IDLE;
-      return;
-    }
-
     if (!bms_is_safe_to_discharge())
     {
-      //A fault has occurred.
       dsn_prot_set_trigger(false);
       bms_state = BMS_FAULT;
       return;
     }
 
-    if (!dsn_prot_get_vacuum_connected())
+    if (!dio_read(DIO_TRIGGER_PRESSED) || !dsn_prot_get_vacuum_connected())
     {
       dsn_prot_set_trigger(false);
       leds_off();
@@ -982,6 +978,10 @@ static void bms_handle_charging(void)
     return;
   }
 
+  // Disable the discharge FET while charging; precharge pin stays asserted
+  // by dsn_protocol so the vacuum keeps logic power.
+  bq7693_disable_discharge();
+
   //Enable charging.
   port_pin_set_output_level(ENABLE_CHARGE_PIN, true);
   //Enable the charge FET in the BQ7693.
@@ -1049,6 +1049,13 @@ static void bms_handle_charging(void)
       port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
       bq7693_disable_charge();
 
+      // Re-enable discharge FET only if a vacuum is currently connected;
+      // otherwise leave it to the idle loop's vacuum-connect edge.
+      if (dsn_prot_get_vacuum_connected() && bms_is_safe_to_discharge())
+      {
+        bq7693_enable_discharge();
+      }
+
       leds_off();
       bms_state = BMS_CHARGER_UNPLUGGED;
       return;
@@ -1076,6 +1083,10 @@ static void bms_handle_charging(void)
         if (!dio_read(DIO_CHARGER_CONNECTED))
         {
           //Charger's been unplugged.
+          if (dsn_prot_get_vacuum_connected() && bms_is_safe_to_discharge())
+          {
+            bq7693_enable_discharge();
+          }
           leds_off();
           bms_state = BMS_CHARGER_UNPLUGGED;
           return;
