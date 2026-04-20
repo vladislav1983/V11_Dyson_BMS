@@ -234,6 +234,11 @@ uint8_t bq7693_calc_checksum(uint8_t inCrc, uint8_t inData)
   return data;
 }
 
+// SYS_CTRL2 bits
+#define SYS_CTRL2_CC_EN   0x40
+#define SYS_CTRL2_DSG_ON  0x02
+#define SYS_CTRL2_CHG_ON  0x01
+
 /** @brief Clear SYS_STAT errors and enable the charge FET. */
 void bq7693_enable_charge(void)
 {
@@ -241,20 +246,23 @@ void bq7693_enable_charge(void)
   //Clear any bits in the SYS_STAT error register
   bq7693_read_register(SYS_STAT, 1, &scratch);
   bq7693_write_register(SYS_STAT, scratch); //Explicitly clear any set bits in the SYS_STAT register by writing them back.
-  //CHG_ON enables the charge FET.
-  bq7693_write_register(SYS_CTRL2, 0x41); //CC_EN, CHG_ON
+
+  uint8_t ctrl2;
+  bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
+  bq7693_write_register(SYS_CTRL2, ctrl2 | SYS_CTRL2_CC_EN | SYS_CTRL2_CHG_ON);
 }
 
-/** @brief Disable the charge FET. */
+/** @brief Disable the charge FET, preserving DSG state. */
 void bq7693_disable_charge(void)
 {
-  bq7693_write_register(SYS_CTRL2, 0x40); //CC_EN, CHG_ON = 0
+  uint8_t ctrl2;
+  bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
+  bq7693_write_register(SYS_CTRL2, ctrl2 & ~SYS_CTRL2_CHG_ON);
 }
 
 /** @brief Configure protection, clear errors, and enable the discharge FET. */
 void bq7693_enable_discharge(void)
 {
-  bq7693_write_register(SYS_CTRL2, 0x40);  //CC_EN=1
   bq7693_write_register(SYS_CTRL1, 0x10);  //ADC_EN=1
 
   bq7693_write_register(PROTECT1, 0x9F);
@@ -264,16 +272,21 @@ void bq7693_enable_discharge(void)
   bq7693_read_register(SYS_STAT, 1, &scratch);
   bq7693_write_register(SYS_STAT, scratch); //Explicitly clear any set bits in the SYS_STAT register by writing them back.
 
-  //DSG_ON turns the discharge FET on.
-  bq7693_write_register(SYS_CTRL2, 0x42);//CC_EN, DSG_ON
+  //DSG_ON turns the discharge FET on. Preserve CHG_ON so charging is not affected.
+  uint8_t ctrl2;
+  bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
+  bq7693_write_register(SYS_CTRL2, ctrl2 | SYS_CTRL2_CC_EN | SYS_CTRL2_DSG_ON);
+
   bq7693_write_register(PROTECT2, 0x04);
   bq7693_write_register(PROTECT1, 0x82);
 }
 
-/** @brief Disable the discharge FET. */
+/** @brief Disable the discharge FET, preserving CHG state. */
 void bq7693_disable_discharge(void)
 {
-  bq7693_write_register(SYS_CTRL2, 0x40);//CC_EN, DSG_OFF
+  uint8_t ctrl2;
+  bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
+  bq7693_write_register(SYS_CTRL2, ctrl2 & ~SYS_CTRL2_DSG_ON);
 }
 
 /**
