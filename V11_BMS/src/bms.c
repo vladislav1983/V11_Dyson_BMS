@@ -90,8 +90,7 @@ const char *bms_state_names[] =
   "CHARGING",
   "CHARGER_CONNECTED_NOT_CHARGING",
   "CHARGER_UNPLUGGED",
-  "TRIGGER_PULLED",
-  "DISCHARGING",
+  "VACUUM_RUNNING",
   "FAULT",
   "SLEEP"
 };
@@ -108,9 +107,8 @@ static bool    bms_is_safe_to_discharge(void);
 static bool    bms_is_safe_to_charge(void);
 static bool    bms_is_pack_full(void);
 static void    bms_handle_idle(void);
-static void    bms_handle_trigger_pulled(void);
 static void    bms_handle_sleep(void);
-static void    bms_handle_discharging(void);
+static void    bms_handle_vacuum_running(void);
 static void    bms_handle_fault(void);
 static void    bms_handle_charger_connected(void);
 static void    bms_handle_charger_connected_not_charging(void);
@@ -254,8 +252,8 @@ uint32_t bms_get_runtime_seconds(void)
   int32_t current_charge_level;
   int32_t runtime = 0;
 
-  if(    bms_state == BMS_DISCHARGING // fill the runtime only when vacuum is working
-      && current_filt_mA_abs > 1000)  // and current is > 1A, to prevent too big numbers
+  if(    bms_state == BMS_VACUUM_RUNNING // estimate only while the motor is actually running
+      && current_filt_mA_abs > 1000)     // and current is > 1A, to keep the result bounded
   {
     // clamp to [0, PACK_MAX_CAPACITY_MAH * 1000]
     current_charge_level = eeprom_data.current_charge_level < 0 ? 0
@@ -308,10 +306,6 @@ void bms_mainloop(void)
         bms_handle_sleep();
       break;
       //-----------------------------------------------------------------------
-      case BMS_TRIGGER_PULLED:
-        bms_handle_trigger_pulled();
-      break;
-      //-----------------------------------------------------------------------
       case BMS_CHARGER_CONNECTED:
         bms_handle_charger_connected();
       break;
@@ -328,8 +322,8 @@ void bms_mainloop(void)
         bms_handle_charger_unplugged();
       break;
       //-----------------------------------------------------------------------
-      case BMS_DISCHARGING:
-        bms_handle_discharging();
+      case BMS_VACUUM_RUNNING:
+        bms_handle_vacuum_running();
       break;
       //-----------------------------------------------------------------------
       case BMS_FAULT:
@@ -722,7 +716,7 @@ static void bms_handle_idle(void)
         
       if (vacuum_connected)
       {
-        bms_state = BMS_TRIGGER_PULLED;
+        bms_state = BMS_VACUUM_RUNNING;
         return;
       }
     }
@@ -745,29 +739,6 @@ static void bms_handle_idle(void)
   //Reached the end of our wait loop, with nobody pulling the trigger, or plugging in charger.
   //Transit to sleep state
   bms_state = BMS_SLEEP;
-}
-
-/** @brief Trigger pulled: verify safety then transition to discharge or fault. */
-static void bms_handle_trigger_pulled(void)
-{
-  // Discharge FET is off — clear any stale SCD/OCD flags from power-up transients
-  // before the safety check. Real faults will re-trigger once the FET is enabled.
-  uint8_t sys_stat;
-  bq7693_read_register(SYS_STAT, 1, &sys_stat);
-  if (sys_stat & 0x03)  // OCD or SCD
-  {
-    bq7693_write_register(SYS_STAT, sys_stat & 0x03);
-  }
-
-  //Check if it's safe to discharge or not.
-  if (bms_is_safe_to_discharge())
-  {
-    bms_state = BMS_DISCHARGING;
-  }
-  else
-  {
-    bms_state = BMS_FAULT;
-  }
 }
 
 /** @brief Sleep: save EEPROM, disable FETs, enter BQ7693 SHIP mode. */
@@ -793,8 +764,8 @@ static void bms_handle_sleep(void)
   while(1);
 }
 
-/** @brief Discharging: monitor safety during active discharge. */
-static void bms_handle_discharging(void)
+/** @brief Vacuum running: monitor safety while trigger held and vacuum connected. */
+static void bms_handle_vacuum_running(void)
 {
 #ifdef SERIAL_DEBUG
   uint8_t debug_print_cnt = 0;
@@ -834,7 +805,7 @@ static void bms_handle_discharging(void)
 #ifdef SERIAL_DEBUG
     if(++debug_print_cnt > 5)
     {
-      BMS_PRINT("BMS:DISCHARGING I:%d mA @ %ld mAH, C:%ld mAH, T:%d 'C, P:%d mV\r\n", abs(current_filt_mA), (eeprom_data.current_charge_level / 1000), (eeprom_data.total_pack_capacity / 1000), (int16_t)(pack_temperature / 10), bq7693_get_pack_voltage());
+      BMS_PRINT("BMS:VACUUM_RUNNING I:%d mA @ %ld mAH, C:%ld mAH, T:%d 'C, P:%d mV\r\n", abs(current_filt_mA), (eeprom_data.current_charge_level / 1000), (eeprom_data.total_pack_capacity / 1000), (int16_t)(pack_temperature / 10), bq7693_get_pack_voltage());
       debug_print_cnt = 0;
     }
 #endif
