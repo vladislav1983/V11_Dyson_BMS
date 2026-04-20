@@ -52,4 +52,7 @@
 #define SERIAL_DEBUG                        1 //Serial debug via the spare USART on the programming pins header
 #define PROT_DEBUG_PRINT                    1
 
+// Trigger behaviour: 0 = momentary (hold to run), 1 = toggle (press to run/stop).
+#define TRIGGER_TOGGLE_MODE                 0
+
 #endif /* CONFIG_H_ */

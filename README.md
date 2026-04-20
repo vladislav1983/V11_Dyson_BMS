@@ -40,8 +40,15 @@ IF YOU DO NOT FULLY UNDERSTAND THE RISKS OF LITHIUM BATTERIES, DO NOT USE THIS P
 
 - Dyson V11 (click-in and screw-type motor head)
 - Dyson V15
+- Dyson V12 (set `TRIGGER_TOGGLE_MODE` to 1 in `config.h` — see below)
 
 The firmware implements the Dyson serial protocol with TLV-based communication.
+
+### Compile-time Options (`config.h`)
+
+| Define | Default | Purpose |
+|--------|---------|---------|
+| `TRIGGER_TOGGLE_MODE` | `0` | Trigger behaviour. `0` = momentary (hold to run, the V11/V15 behaviour). `1` = toggle (each press flips run/stop; hold for ≥1 s to force stop). Set to `1` for the Dyson V12, whose trigger is a click-to-latch button rather than a held switch. |
 
 ## Build Toolchain
 

@@ -190,7 +190,6 @@ static uint32_t    last_motor_speed;
 static bool        pending_sleep;
 static bool        charger_at_sleep;   // latch charger state when entering DSN_SLEEP
 static sw_timer    motor_speed_timer;
-static bool        frames_seen;
 static bool        motor_speed_seen;
 static bool        handshake_key_seen;
 static uint32_t    wakeup_source;
@@ -229,7 +228,6 @@ void dsn_prot_init(void)
   last_motor_speed = 0;
   pending_sleep    = false;
   motor_speed_seen = false;
-  frames_seen      = false;
   wakeup_source    = 0;
 }
 
@@ -252,7 +250,6 @@ void dsn_prot_reset(void)
   vacuum_connected = false;
   pending_sleep    = false;
   motor_speed_seen = false;
-  frames_seen      = false;
 }
 
 /**
@@ -296,7 +293,6 @@ void dsn_prot_mainloop(void)
       rx_state  = RX_INIT;
       sleep_flag       = false;
       vacuum_connected = false;
-      frames_seen = false;
       motor_speed_seen = false;
       sw_timer_start(&session_timer);
       sw_timer_start(&motor_speed_timer);
@@ -313,8 +309,6 @@ void dsn_prot_mainloop(void)
       {
         if (rx_byte_handler(ch))
         {
-          frames_seen = true;
-
           if (process_rx_frame())
           {
             sw_timer_start(&wait_timer);
@@ -335,7 +329,6 @@ void dsn_prot_mainloop(void)
         bq7693_disable_discharge();
         vacuum_connected = false;
         motor_speed_seen = false;
-        frames_seen      = false;
         sw_timer_start(&session_timer);
         dsn_state = DSN_POWER_CYCLE;
       }
@@ -371,7 +364,6 @@ void dsn_prot_mainloop(void)
         // discard sleep request received before handshake completes
         pending_sleep = false;
         // restart motor speed watchdog and clear flags
-        frames_seen = false;
         motor_speed_seen = false;
         sw_timer_start(&motor_speed_timer);
         dsn_state = DSN_WAIT_HANDSHAKE;

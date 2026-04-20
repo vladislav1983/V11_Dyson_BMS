@@ -103,6 +103,7 @@ static void    pins_init(void);
 static void    pins_deinit(void);
 static void    interrupts_init(void);
 static int16_t bms_read_temperature(void);
+static bool    bms_trigger_active(void);
 static bool    bms_is_safe_to_discharge(void);
 static bool    bms_is_safe_to_charge(void);
 static bool    bms_is_pack_full(void);
@@ -350,6 +351,34 @@ static void bms_set_error(enum BMS_ERROR_CODE code)
 {
   if (bms_error < code)
     bms_error = code;
+}
+
+/**  @brief Trigger state */
+static bool bms_trigger_active(void)
+{
+#if TRIGGER_TOGGLE_MODE
+  static bool     latched    = false;
+  static uint8_t  prev_level = 0;
+  static sw_timer held_timer = 0;
+
+  uint8_t level = dio_read(DIO_TRIGGER_PRESSED);
+
+  if (level && !prev_level) // rising edge
+  {
+    latched = !latched;
+    sw_timer_start(&held_timer);
+  }
+  else if (level && prev_level)
+  {
+    if (latched && sw_timer_is_elapsed(&held_timer, 1000))
+      latched = false;
+  }
+  prev_level = level;
+
+  return latched;
+#else
+  return dio_read(DIO_TRIGGER_PRESSED);
+#endif
 }
 
 /** @brief Force the state machine into BMS_FAULT with the given error code. ISR-safe. */
@@ -670,7 +699,7 @@ static void bms_handle_idle(void)
   do
   {
     bool vacuum_connected = dsn_prot_get_vacuum_connected();
-    bool trigger_pressed  = (dio_read(DIO_TRIGGER_PRESSED) == true);
+    bool trigger_pressed  = bms_trigger_active();
 
     if (vacuum_connected && !vacuum_was_connected)
     {
@@ -683,13 +712,9 @@ static void bms_handle_idle(void)
     vacuum_was_connected = vacuum_connected;
 
     if(true == vacuum_connected)
-    {
       sleep_time = (IDLE_TIME * 1000ul);
-    }
     else
-    {
       sleep_time = (20 * 1000ul); // 20 sec
-    }
 
     if (dio_read(DIO_CHARGER_CONNECTED) == true)
     {
@@ -711,15 +736,11 @@ static void bms_handle_idle(void)
       }
     }
     else if(force_sleep == true)
-    {
       sw_timer_stop(&bms_timer); // go to sleep
-    }
     else if(dsn_prot_get_sleep_flag() == true)
-    {
       sw_timer_stop(&bms_timer); // go to sleep requested by cleaner
-    }
-    trigger_was_pressed = trigger_pressed;
 
+    trigger_was_pressed = trigger_pressed;
 
     sw_timer_delay_ms(50);
     wdt_reset_count();
@@ -761,10 +782,6 @@ static void bms_handle_vacuum_running(void)
   uint8_t debug_print_cnt = 0;
 #endif
 
-  // Entry-side safety: if unsafe, route to FAULT immediately so the fault
-  // handler can do capacity learning. Previously the unsafe verdict was
-  // silently dropped and the in-loop recheck could see cells recover once
-  // the motor coasted down.
   if (!bms_is_safe_to_discharge())
   {
     dsn_prot_set_trigger(false);
@@ -782,7 +799,7 @@ static void bms_handle_vacuum_running(void)
       return;
     }
 
-    if (!dio_read(DIO_TRIGGER_PRESSED) || !dsn_prot_get_vacuum_connected())
+    if (!bms_trigger_active() || !dsn_prot_get_vacuum_connected())
     {
       dsn_prot_set_trigger(false);
       leds_off();
@@ -806,9 +823,6 @@ static void bms_handle_vacuum_running(void)
 /** @brief Fault: display error, retry safety for transient faults, keep protocol alive. */
 static void bms_handle_fault(void)
 {
-  // Transient faults clear once the underlying condition resolves (pack cools,
-  // overcurrent latch settles). Keep probing bms_is_safe_to_discharge and exit
-  // back to idle when it passes; other codes wait for user action as before.
   const enum BMS_ERROR_CODE original_error = bms_error;
   const bool auto_recover = (original_error == BMS_ERR_PACK_UNDERTEMP
                           || original_error == BMS_ERR_PACK_OVERTEMP
@@ -827,18 +841,13 @@ static void bms_handle_fault(void)
   if (auto_recover)
     sw_timer_start(&retry_timer);
 
-  // Persist the pack-discharged anchor once so capacity learning can run on the
-  // next full charge, regardless of how long the user watches the fault blink.
   if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE)
   {
     eeprom_data.current_charge_level = 0;
     eeprom_data.full_discharge_seen = 1;
   }
 
-  // Blink the error pattern until the user acknowledges by releasing the
-  // trigger AND pressing it again (rising edge after fault entry), or until
-  // the charger is plugged in, or an auto-recoverable fault clears on retry.
-  bool trigger_state = dio_read(DIO_TRIGGER_PRESSED);
+  bool trigger_state = bms_trigger_active();
 
   while (1)
   {
@@ -858,10 +867,10 @@ static void bms_handle_fault(void)
       return;
     }
 
-    bool trigger_now = dio_read(DIO_TRIGGER_PRESSED);
+    bool trigger_now = bms_trigger_active();
+
     if (trigger_now && !trigger_state)
     {
-      // Rising edge after fault entry — explicit acknowledgement.
       leds_off();
       bms_state = BMS_IDLE;
       return;
@@ -870,8 +879,6 @@ static void bms_handle_fault(void)
 
     if (auto_recover && sw_timer_is_elapsed(&retry_timer, 5000))
     {
-      // bms_is_safe_to_discharge() clobbers bms_error; restore the original
-      // so the LED blink code stays stable if the retry fails.
       bool safe = bms_is_safe_to_discharge();
       if (safe)
       {
