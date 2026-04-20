@@ -33,6 +33,7 @@
 #include "crc.h"
 #include "bms.h"
 #include "bms_adc.h"
+#include "bq7693.h"
 #include "dio.h"
 #include "config.h"
 
@@ -99,6 +100,7 @@
 #define SESSION_TIMEOUT_MS      2000
 #define RX_TIMEOUT_MS           5
 #define MOTOR_SPEED_WDT_MS      2000
+#define POWER_CYCLE_MS          1000
 
 // TLV pair IDs used in analyze_frame response logic
 #define PAIR_TLV_READ           0x1002
@@ -147,6 +149,7 @@ typedef enum
   DSN_TX_FRAME,
   DSN_WAIT_TX,
   DSN_SLEEP,
+  DSN_POWER_CYCLE,
 } dsn_state_t;
 
 typedef enum
@@ -275,7 +278,11 @@ void dsn_prot_mainloop(void)
 {
   // Session timeout: no messages for 2 s -> disconnect
   if (sw_timer_is_elapsed(&session_timer, SESSION_TIMEOUT_MS))
+  {
+    if (vacuum_connected)
+      bq7693_disable_discharge();
     vacuum_connected = false;
+  }
 
   switch (dsn_state)
   {
@@ -319,16 +326,18 @@ void dsn_prot_mainloop(void)
         }
       }
 
-      // Motor speed watchdog: if we previously received motor speed
-      // but it stopped arriving, the vacuum is stuck — power cycle it
+      // Motor speed watchdog, mark vacuum disconnected
       if (   motor_speed_seen
           && sw_timer_is_elapsed(&motor_speed_timer, MOTOR_SPEED_WDT_MS))
       {
         DSN_PRINT("PROT:MS_WDT\r\n");
         port_pin_set_output_level(PRECHARGE_PIN, false);
-        port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
-        delay_ms(500);
-        dsn_state = DSN_INIT;
+        bq7693_disable_discharge();
+        vacuum_connected = false;
+        motor_speed_seen = false;
+        frames_seen      = false;
+        sw_timer_start(&session_timer);
+        dsn_state = DSN_POWER_CYCLE;
       }
       break;
     }
@@ -367,6 +376,13 @@ void dsn_prot_mainloop(void)
         sw_timer_start(&motor_speed_timer);
         dsn_state = DSN_WAIT_HANDSHAKE;
       }
+      break;
+
+    //------------------------------------------------------------------------
+    case DSN_POWER_CYCLE:
+      // wait some time before re-initializing protocol to allow vacuum to fully disconnect
+      if (sw_timer_is_elapsed(&session_timer, POWER_CYCLE_MS))
+        dsn_state = DSN_INIT;
       break;
 
     //------------------------------------------------------------------------
@@ -1055,6 +1071,7 @@ static void handle_sleep(void)
   sleep_flag       = true;
   vacuum_connected = false;
   charger_at_sleep = dio_read(DIO_CHARGER_CONNECTED);
+  bq7693_disable_discharge();
   port_pin_set_output_level(PRECHARGE_PIN, false);
   port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
   delay_ms(300);
