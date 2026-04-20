@@ -517,15 +517,7 @@ static bool bms_is_safe_to_discharge(void)
     if (cell_voltages[i] < CELL_LOWEST_DISCHARGE_VOLTAGE)
     {
       bms_set_error(BMS_ERR_PACK_DISCHARGED);
-
-#ifdef SERIAL_DEBUG
-      BMS_PRINT("%s: Cell voltages too low\r\n", __FUNCTION__);
-
-      for (int cell=0; cell<7; ++cell)
-      {
-        BMS_PRINT("Cell %d: %d mV, min %d mV\r\n", cell, cell_voltages[cell], CELL_LOWEST_DISCHARGE_VOLTAGE);
-      }
-#endif
+      BMS_PRINT("BMS:CELL_LOW c=%d v=%dmV\r\n", i, cell_voltages[i]);
     }
   }
   //Check pack temperature remains in acceptable range
