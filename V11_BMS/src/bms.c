@@ -815,47 +815,88 @@ static void bms_handle_vacuum_running(void)
   }
 }
 
-/** @brief Fault: display error via LEDs, wait for user action. */
+/** @brief Fault: display error, retry safety for transient faults, keep protocol alive. */
 static void bms_handle_fault(void)
 {
+  // Transient faults clear once the underlying condition resolves (pack cools,
+  // overcurrent latch settles). Keep probing bms_is_safe_to_discharge and exit
+  // back to idle when it passes; other codes wait for user action as before.
+  const enum BMS_ERROR_CODE original_error = bms_error;
+  const bool auto_recover = (original_error == BMS_ERR_PACK_UNDERTEMP
+                          || original_error == BMS_ERR_PACK_OVERTEMP
+                          || original_error == BMS_ERR_OVERCURRENT
+                          || original_error == BMS_ERR_SHORTCIRCUIT);
+  sw_timer retry_timer = 0;
+
+  BMS_PRINT("BMS:FAULT err=%d auto_recover=%d\r\n", original_error, auto_recover);
   eeprom_write();
 
-  //Turn all the LEDs off.
   leds_off();
   dsn_prot_set_trigger(false);
   bq7693_disable_discharge();
   port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
 
-  //Show the error status and continue to show it, until trigger released and charger unplugged.
-  do
+  if (auto_recover)
+    sw_timer_start(&retry_timer);
+
+  // Persist the pack-discharged anchor once so capacity learning can run on the
+  // next full charge, regardless of how long the user watches the fault blink.
+  if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE)
   {
-    if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE )
-    {
-      //If the problem is just a flat pack, blink
-      leds_blink_leds(50);
+    eeprom_data.current_charge_level = 0;
+    eeprom_data.full_discharge_seen = 1;
+  }
 
-      // Anchor counter to known empty state. Capacity learning deferred
-      // to charge completion where both endpoints are known.
-      eeprom_data.current_charge_level = 0;
-      eeprom_data.full_discharge_seen = 1;
-    }
-    else
-    {
-      //Flash the red error led the number of times indicated by the fault code.
-      for (int i=0; i < bms_error; ++i)
-      {
-        leds_blink_leds(500);
-        wdt_reset_count();
-      }
+  // Blink the error pattern until the user acknowledges by releasing the
+  // trigger AND pressing it again (rising edge after fault entry), or until
+  // the charger is plugged in, or an auto-recoverable fault clears on retry.
+  bool trigger_state = dio_read(DIO_TRIGGER_PRESSED);
 
-      sw_timer_delay_ms(2000);
+  while (1)
+  {
+    // Blink the error code N times (N = bms_error), then pause so the user
+    // can count the pattern. Pack-discharged / undervoltage blink once each.
+    for (int i = 0; i < bms_error; ++i)
+    {
+      leds_blink_leds(500);
       wdt_reset_count();
     }
-  }
-  while (dio_read(DIO_TRIGGER_PRESSED) || dio_read(DIO_CHARGER_CONNECTED));
+    sw_timer_delay_ms(2000);
+    wdt_reset_count();
 
-  //Return to idle
-  bms_state = BMS_IDLE;
+    if (dio_read(DIO_CHARGER_CONNECTED))
+    {
+      bms_state = BMS_CHARGER_CONNECTED;
+      return;
+    }
+
+    bool trigger_now = dio_read(DIO_TRIGGER_PRESSED);
+    if (trigger_now && !trigger_state)
+    {
+      // Rising edge after fault entry — explicit acknowledgement.
+      leds_off();
+      bms_state = BMS_IDLE;
+      return;
+    }
+    trigger_state = trigger_now;
+
+    if (auto_recover && sw_timer_is_elapsed(&retry_timer, 5000))
+    {
+      // bms_is_safe_to_discharge() clobbers bms_error; restore the original
+      // so the LED blink code stays stable if the retry fails.
+      bool safe = bms_is_safe_to_discharge();
+      if (safe)
+      {
+        BMS_PRINT("BMS:FAULT_RECOVERED err=%d\r\n", original_error);
+        bms_error = BMS_ERR_NONE;
+        leds_off();
+        bms_state = BMS_IDLE;
+        return;
+      }
+      bms_error = original_error;
+      sw_timer_start(&retry_timer);
+    }
+  }
 }
 
 /** @brief Charger connected: evaluate pack and begin charging or report full. */
