@@ -25,9 +25,11 @@
 //A struct to represent the stored eeprom data
 struct eeprom_data
 {
-  int32_t total_pack_capacity;    //micro-amp-hours
-  int32_t current_charge_level;   //micro-amp-hours
-  uint8_t full_discharge_seen;    //capacity calibration flag
+  int32_t  total_pack_capacity;    //micro-amp-hours
+  int32_t  current_charge_level;   //micro-amp-hours
+  uint8_t  full_discharge_seen;    //capacity calibration flag
+  uint8_t  imbalance_locked;       //cell imbalance latched, blocks charge+discharge
+  uint8_t  reserved[6];
   uint32_t crc32;
 } ;
 

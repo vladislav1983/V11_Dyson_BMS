@@ -77,10 +77,21 @@ static const dio_cfg_t dio_cfg[DIO_NUM] =
 /**
  * @brief Initialise the digital I/O module.
  *
- * Starts the periodic task timer used by dio_mainloop().
+ * Seeds each channel's debounced value from the live pin level so the very
+ * first dio_read() returns the truth, then starts the periodic task timer.
+ * Without seeding, every input reads as 0 until the first mainloop tick,
+ * which is long enough for an early consumer (e.g. bms_trigger_active() in
+ * toggle mode) to see a phantom 0->1 transition.
  */
 void dio_init(void)
 {
+  for (uint32_t i = 0; i < (uint32_t)DIO_NUM; i++)
+  {
+    uint8_t level = port_pin_get_input_level(dio_cfg[i].gpio_pin);
+    dio_data[i].value_old        = level;
+    dio_data[i].debounced_value  = level;
+    dio_data[i].debounce_counter = 0;
+  }
   sw_timer_start(&task_timer);
 }
 

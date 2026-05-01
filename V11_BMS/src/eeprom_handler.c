@@ -14,9 +14,9 @@ volatile struct eeprom_data eeprom_data;
  */
 void eeprom_write_defaults(void)
 {
-  eeprom_data.total_pack_capacity      = (PACK_MAX_CAPACITY_MAH       * 1200ul);  //in micro-amp-hours
-  eeprom_data.current_charge_level     = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul);
-  eeprom_data.full_discharge_seen      = 0;
+  memset((void *)&eeprom_data, 0, sizeof(eeprom_data));
+  eeprom_data.total_pack_capacity  = (PACK_MAX_CAPACITY_MAH     * 1200ul);
+  eeprom_data.current_charge_level = ((PACK_MAX_CAPACITY_MAH/2) * 1000ul);
   eeprom_write();
 }
 
@@ -57,6 +57,13 @@ int eeprom_init(void)
     if (eeprom_read() != 0)
     {
       //CRC mismatch - data corrupted, reinitialize with defaults
+      eeprom_write_defaults();
+    }
+    else if (eeprom_data.full_discharge_seen > 1 || eeprom_data.imbalance_locked > 1)
+    {
+      // Boolean byte outside {0,1} means uninitialised (erased flash = 0xFF)
+      // or written by a firmware whose struct layout did not cover this byte.
+      // Treat as corrupt and rewrite.
       eeprom_write_defaults();
     }
   }

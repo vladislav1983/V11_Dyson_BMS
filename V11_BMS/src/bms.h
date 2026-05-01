@@ -51,6 +51,7 @@ enum BMS_ERROR_CODE
   BMS_ERR_SHORTCIRCUIT,    // 8  BMS IC short circuit trip
   BMS_ERR_I2C_FAIL,        // 9  Unable to talk to the BQ7693 IC - very bad!
   BMS_ERR_WDT,             // 10 Watchdog early warning fired - main loop stalled!
+  BMS_ERR_CELL_IMBALANCE,  // 11 Cell spread exceeded CELL_IMBALANCE_FAULT_MV.
 };
 
 /*-----------------------------------------------------------------------------

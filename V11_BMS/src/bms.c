@@ -103,7 +103,9 @@ static void    pins_init(void);
 static void    pins_deinit(void);
 static void    interrupts_init(void);
 static int16_t bms_read_temperature(void);
+static uint16_t bms_get_cell_spread_mv(void);
 static bool    bms_trigger_active(void);
+static bool    bms_factory_reset_check(uint8_t *count, bool *prev_level, sw_timer *timeout);
 static bool    bms_is_safe_to_discharge(void);
 static bool    bms_is_safe_to_charge(void);
 static bool    bms_is_pack_full(void);
@@ -210,9 +212,19 @@ void bms_interrupt_process(void)
         cc_uah /= 32768;
         eeprom_data.current_charge_level += cc_uah;
 
-        // Clamp charge level to valid range
-        if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
+        if (eeprom_data.full_discharge_seen)
+        {
+          if (eeprom_data.current_charge_level > (int32_t)(PACK_MAX_CAPACITY_MAH * 1200ul))
+            eeprom_data.current_charge_level = (int32_t)(PACK_MAX_CAPACITY_MAH * 1200ul);
+
+          if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
+            eeprom_data.total_pack_capacity = eeprom_data.current_charge_level;
+        }
+        else if (eeprom_data.current_charge_level > eeprom_data.total_pack_capacity)
+        {
+          // normal operation: clamp to the learned ceiling
           eeprom_data.current_charge_level = eeprom_data.total_pack_capacity;
+        }
         if (eeprom_data.current_charge_level < 0)
           eeprom_data.current_charge_level = 0;
       }
@@ -283,7 +295,6 @@ void bms_mainloop(void)
     {
     //-----------------------------------------------------------------------
       case BMS_INIT:
-        bms_state = BMS_IDLE;
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
         //Initial debug blurb
         serial_debug_send_message("Dyson V11/V15 BMS After market firmware\r\n");
@@ -297,6 +308,17 @@ void bms_mainloop(void)
         serial_debug_send_pack_capacity();
 #endif
         wdt_reset_count();
+
+        // surface a latched fault from EEPROM up front, before the user tries to use the pack
+        if (eeprom_data.imbalance_locked)
+        {
+          bms_error = BMS_ERR_CELL_IMBALANCE;
+          bms_state = BMS_FAULT;
+        }
+        else
+        {
+          bms_state = BMS_IDLE;
+        }
       break;
       //-----------------------------------------------------------------------
       case BMS_IDLE:
@@ -353,25 +375,42 @@ static void bms_set_error(enum BMS_ERROR_CODE code)
     bms_error = code;
 }
 
-/**  @brief Trigger state */
+/**
+ * @brief read trigger state, returns true while the user wants the motor on,
+ *        toggle mode (V12) flips a latch on each press and holding >= 1 s
+ *        force-clears it, the latch is dropped on every call from a
+ *        non-sampling state so non-sampling handlers can call this once to
+ *        wipe stale state on the way out, momentary mode (V11/V15) just
+ *        returns the raw pin level
+ */
 static bool bms_trigger_active(void)
 {
 #if TRIGGER_TOGGLE_MODE
   static bool     latched    = false;
-  static uint8_t  prev_level = 0;
+  static bool     prev_level = false;
   static sw_timer held_timer = 0;
 
-  uint8_t level = dio_read(DIO_TRIGGER_PRESSED);
+  bool level    = dio_read(DIO_TRIGGER_PRESSED);
+  bool sampling = (bms_state == BMS_IDLE || bms_state == BMS_VACUUM_RUNNING);
 
-  if (level && !prev_level) // rising edge
+  // drop the latch when the vacuum must not run: vacuum disconnected or
+  // called from a non-sampling state, sync prev_level so a held trigger
+  // doesn't read as a rising edge on the next sample
+  if (!dsn_prot_get_vacuum_connected() || !sampling)
+  {
+    latched    = false;
+    prev_level = level;
+    return false;
+  }
+
+  if (level && !prev_level)            // rising edge: flip latch
   {
     latched = !latched;
     sw_timer_start(&held_timer);
   }
-  else if (level && prev_level)
+  else if (level && latched && sw_timer_is_elapsed(&held_timer, 1000))
   {
-    if (latched && sw_timer_is_elapsed(&held_timer, 1000))
-      latched = false;
+    latched = false;                   // hold >= 1 s clears the latch
   }
   prev_level = level;
 
@@ -379,6 +418,39 @@ static bool bms_trigger_active(void)
 #else
   return dio_read(DIO_TRIGGER_PRESSED);
 #endif
+}
+
+/**
+ * @brief factory-reset gesture: 20 raw trigger presses with gap < 5 s between
+ *        them, reads the raw pin (not bms_trigger_active) so the V12 toggle
+ *        latch can't mask presses, caller owns the counter so multiple call
+ *        sites (fault, charging) can run independent gestures
+ * @return true exactly once, on the 20th press
+ */
+static bool bms_factory_reset_check(uint8_t *count, bool *prev_level, sw_timer *timeout)
+{
+  const uint8_t  presses_required = 20;
+  const uint32_t gap_ms           = 5000;
+
+  bool level = dio_read(DIO_TRIGGER_PRESSED);
+
+  if (level && !*prev_level)
+  {
+    sw_timer_start(timeout);   // rolling window, every press re-arms it
+    (*count)++;
+  }
+  *prev_level = level;
+
+  if (*count > 0 && sw_timer_is_elapsed(timeout, gap_ms))
+    *count = 0;
+
+  if (*count >= presses_required)
+  {
+    BMS_PRINT("BMS:FACTORY_RESET\r\n");
+    *count = 0;
+    return true;
+  }
+  return false;
 }
 
 /** @brief Force the state machine into BMS_FAULT with the given error code. ISR-safe. */
@@ -530,6 +602,20 @@ static int16_t bms_read_temperature(void)
   return tc1_temp;
 }
 
+/** @brief highest minus lowest cell voltage, in mV */
+static uint16_t bms_get_cell_spread_mv(void)
+{
+  uint16_t *cells = bq7693_get_cell_voltages();
+  uint16_t lo = cells[0];
+  uint16_t hi = cells[0];
+  for (int i = 1; i < 7; ++i)
+  {
+    if (cells[i] < lo) lo = cells[i];
+    if (cells[i] > hi) hi = cells[i];
+  }
+  return hi - lo;
+}
+
 /**
  * @brief Check if pack conditions allow discharge.
  * @return true if safe.
@@ -595,10 +681,12 @@ static bool bms_is_safe_to_discharge(void)
     BMS_PRINT("%s: BMS IC Overvoltage Trip\r\n", __FUNCTION__);
   }
 
-  if (bms_error == BMS_ERR_NONE)
-    return true;
-  else
-    return false;
+  // imbalance lock persists across reboots, live detection runs in
+  // bms_is_safe_to_charge near the top of charge
+  if (eeprom_data.imbalance_locked)
+    bms_set_error(BMS_ERR_CELL_IMBALANCE);
+
+  return (bms_error == BMS_ERR_NONE);
 }
 
 /**
@@ -657,10 +745,31 @@ static bool bms_is_safe_to_charge(void)
     bq7693_write_register(SYS_STAT, 0x04);
   }
 
-  if (bms_error == BMS_ERR_NONE)
-    return true;
+  // persistent imbalance lock blocks operation until the factory-reset
+  // gesture, live detection runs near the top of charge where cells should
+  // have converged, a spread above the threshold at that SoC means real
+  // capacity mismatch, not load sag or curve-knee divergence
+  if (eeprom_data.imbalance_locked)
+  {
+    bms_set_error(BMS_ERR_CELL_IMBALANCE);
+  }
   else
-    return false;
+  {
+    uint16_t lo = cell_voltages[0];
+    uint16_t hi = cell_voltages[0];
+    for (int i = 1; i < 7; ++i)
+    {
+      if (cell_voltages[i] < lo) lo = cell_voltages[i];
+      if (cell_voltages[i] > hi) hi = cell_voltages[i];
+    }
+    if (hi >= CELL_IMBALANCE_NEAR_FULL_MV && (uint16_t)(hi - lo) >= CELL_IMBALANCE_FAULT_MV)
+    {
+      bms_set_error(BMS_ERR_CELL_IMBALANCE);
+      BMS_PRINT("BMS:IMBALANCE hi=%umV lo=%umV\r\n", hi, lo);
+    }
+  }
+
+  return (bms_error == BMS_ERR_NONE);
 }
 
 /**
@@ -693,6 +802,7 @@ static void bms_handle_idle(void)
   uint32_t sleep_time;
   bool vacuum_was_connected = false;
   bool trigger_was_pressed  = false;
+  uint8_t imbalance_idle_count = 0;
 
   sw_timer_start(&bms_timer);
 
@@ -710,6 +820,38 @@ static void bms_handle_idle(void)
       }
     }
     vacuum_was_connected = vacuum_connected;
+
+    // idle imbalance check, only valid above the SoC knee where the
+    // OCV curve is flat and spread reflects real capacity mismatch
+    // rather than curve shape
+    {
+      uint16_t *cells = bq7693_get_cell_voltages();
+      uint16_t lo = cells[0];
+      uint16_t hi = cells[0];
+      for (int i = 1; i < 7; ++i)
+      {
+        if (cells[i] < lo) lo = cells[i];
+        if (cells[i] > hi) hi = cells[i];
+      }
+      if ( // lo >= CELL_IMBALANCE_IDLE_MIN_MV &&
+           (uint16_t)(hi - lo) >= CELL_IMBALANCE_FAULT_MV)
+      {
+        if (imbalance_idle_count < CELL_IMBALANCE_IDLE_DEBOUNCE)
+          imbalance_idle_count++;
+      }
+      else
+      {
+        imbalance_idle_count = 0;
+      }
+
+      if (imbalance_idle_count >= CELL_IMBALANCE_IDLE_DEBOUNCE)
+      {
+        BMS_PRINT("BMS:IMBALANCE_AT_IDLE hi=%umV lo=%umV\r\n", hi, lo);
+        bms_error = BMS_ERR_CELL_IMBALANCE;
+        bms_state = BMS_FAULT;
+        return;
+      }
+    }
 
     if(true == vacuum_connected)
       sleep_time = (IDLE_TIME * 1000ul);
@@ -820,7 +962,16 @@ static void bms_handle_vacuum_running(void)
   }
 }
 
-/** @brief Fault: display error, retry safety for transient faults, keep protocol alive. */
+/**
+ * @brief fault: blink the error code on the LEDs and wait for user action,
+ *        exit paths are charger plug-in -> BMS_CHARGER_CONNECTED,
+ *        20-press gesture -> factory reset and BMS_IDLE,
+ *        trigger rising edge (momentary-mode builds only) -> BMS_IDLE,
+ *        auto-recover retry passes (transient faults only) -> BMS_IDLE,
+ *        the LED pattern is a non-blocking state machine ticked every 20 ms
+ *        so trigger presses are never missed, even on long codes like
+ *        BMS_ERR_CELL_IMBALANCE (11 blinks)
+ */
 static void bms_handle_fault(void)
 {
   const enum BMS_ERROR_CODE original_error = bms_error;
@@ -828,9 +979,24 @@ static void bms_handle_fault(void)
                           || original_error == BMS_ERR_PACK_OVERTEMP
                           || original_error == BMS_ERR_OVERCURRENT
                           || original_error == BMS_ERR_SHORTCIRCUIT);
-  sw_timer retry_timer = 0;
 
   BMS_PRINT("BMS:FAULT err=%d auto_recover=%d\r\n", original_error, auto_recover);
+
+  // persist fault-dependent state in a single eeprom_write(),
+  // cell imbalance latches a flag that blocks charge/discharge until
+  // the user performs the factory reset, pack-discharged / UV anchors
+  // the coulomb counter to 0 so capacity learning starts clean on the
+  // next full charge
+  if (original_error == BMS_ERR_CELL_IMBALANCE)
+  {
+    eeprom_data.imbalance_locked = 1;
+  }
+  else if (original_error == BMS_ERR_PACK_DISCHARGED
+        || original_error == BMS_ERR_UNDERVOLTAGE)
+  {
+    eeprom_data.current_charge_level = 0;
+    eeprom_data.full_discharge_seen  = 1;
+  }
   eeprom_write();
 
   leds_off();
@@ -838,49 +1004,78 @@ static void bms_handle_fault(void)
   bq7693_disable_discharge();
   port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
 
+  // LED pattern timing
+  const uint32_t tick_ms     = 20;
+  const uint32_t half_ms     = 250;    // one half-blink (on or off)
+  const uint32_t pause_ms    = 2000;   // pause between groups
+  const uint8_t  blink_total = bms_error;
+
+  enum { PHASE_ON, PHASE_OFF, PHASE_PAUSE } phase = PHASE_ON;
+  uint8_t  blink_idx = 0;
+  uint32_t phase_ms  = 0;
+
+  // factory-reset gesture state (raw trigger edges, safe in V12 toggle mode)
+  uint8_t  reset_count   = 0;
+  bool     reset_prev    = dio_read(DIO_TRIGGER_PRESSED);
+  sw_timer reset_timeout = 0;
+
+  sw_timer retry_timer = 0;
   if (auto_recover)
     sw_timer_start(&retry_timer);
 
-  if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE)
-  {
-    eeprom_data.current_charge_level = 0;
-    eeprom_data.full_discharge_seen = 1;
-  }
+#if !TRIGGER_TOGGLE_MODE
+  // single-press exit, disabled in toggle mode where any press would flip
+  // the latch and immediately leave the fault, toggle users exit via the
+  // 20-press gesture or by plugging in the charger
+  bool trigger_prev = bms_trigger_active();
+#endif
 
-  bool trigger_state = bms_trigger_active();
+  leds_on();
 
   while (1)
   {
-    // Blink the error code N times (N = bms_error), then pause so the user
-    // can count the pattern. Pack-discharged / undervoltage blink once each.
-    for (int i = 0; i < bms_error; ++i)
-    {
-      leds_blink_leds(500);
-      wdt_reset_count();
-    }
-    sw_timer_delay_ms(2000);
+    sw_timer_delay_ms(tick_ms);
     wdt_reset_count();
+    phase_ms += tick_ms;
 
     if (dio_read(DIO_CHARGER_CONNECTED))
     {
+      leds_off();
       bms_state = BMS_CHARGER_CONNECTED;
       return;
     }
 
-    bool trigger_now = bms_trigger_active();
+    if (bms_factory_reset_check(&reset_count, &reset_prev, &reset_timeout))
+    {
+      // imbalance-lock recovery: clear only the lock flag and keep the
+      // learned capacity and coulomb counter, other faults fall through
+      // to a full factory reset (handled elsewhere)
+      if (original_error == BMS_ERR_CELL_IMBALANCE)
+      {
+        eeprom_data.imbalance_locked = 0;
+        eeprom_write();
+      }
 
-    if (trigger_now && !trigger_state)
+      leds_off();
+      leds_blink_leds_num(LEDS_LED_ERR_LEFT, 10, 100);
+      bms_state = BMS_IDLE;
+      return;
+    }
+
+#if !TRIGGER_TOGGLE_MODE
+    bool trigger_now = bms_trigger_active();
+    if (trigger_now && !trigger_prev)
     {
       leds_off();
       bms_state = BMS_IDLE;
       return;
     }
-    trigger_state = trigger_now;
+    trigger_prev = trigger_now;
+#endif
 
     if (auto_recover && sw_timer_is_elapsed(&retry_timer, 5000))
     {
-      bool safe = bms_is_safe_to_discharge();
-      if (safe)
+      if (bms_is_safe_to_discharge())
       {
         BMS_PRINT("BMS:FAULT_RECOVERED err=%d\r\n", original_error);
         bms_error = BMS_ERR_NONE;
@@ -891,20 +1086,49 @@ static void bms_handle_fault(void)
       bms_error = original_error;
       sw_timer_start(&retry_timer);
     }
+
+    // LED pattern: ON -> OFF -> (next blink | PAUSE) -> ON ...
+    switch (phase)
+    {
+      case PHASE_ON:
+        if (phase_ms >= half_ms) { leds_off(); phase = PHASE_OFF; phase_ms = 0; }
+        break;
+      case PHASE_OFF:
+        if (phase_ms >= half_ms)
+        {
+          if (++blink_idx < blink_total) { leds_on(); phase = PHASE_ON; }
+          else                           {            phase = PHASE_PAUSE; }
+          phase_ms = 0;
+        }
+        break;
+      case PHASE_PAUSE:
+        if (phase_ms >= pause_ms)
+        {
+          blink_idx = 0;
+          leds_on();
+          phase    = PHASE_ON;
+          phase_ms = 0;
+        }
+        break;
+    }
   }
 }
 
 /** @brief Charger connected: evaluate pack and begin charging or report full. */
 static void bms_handle_charger_connected(void)
 {
+  // clear any pre-existing trigger intent on plug-in, without this the
+  // dsn-protocol trigger_state or the V12 toggle latch could survive the
+  // charge cycle and start the motor when the charger is later removed
+  dsn_prot_set_trigger(false);
+  bms_trigger_active();
+
   if (bms_is_pack_full())
   {
     bms_state = BMS_CHARGER_CONNECTED_NOT_CHARGING;
   }
   else if (bms_is_safe_to_charge())
   {
-    // force trigger state
-    dsn_prot_set_trigger(false);
     bms_state = BMS_CHARGING;
   }
   else
@@ -916,6 +1140,11 @@ static void bms_handle_charger_connected(void)
 /** @brief Not charging: manage standby sleep while charger is connected. */
 static void bms_handle_charger_connected_not_charging(void)
 {
+  // drop the V12 toggle latch so the vacuum doesn't auto-start when the
+  // charger is later removed, bms_trigger_active() returns early on a
+  // non-sampling state and clears its internal latch
+  bms_trigger_active();
+
   leds_blink_leds(2000);
 
   while(1)
@@ -973,10 +1202,10 @@ static void bms_handle_charging(void)
   uint8_t debug_print_cnt = 0;
 #endif
 
-  // First-cycle reset: 20 trigger pushes while charging resets learned capacity
-  uint8_t trigger_push_count = 0;
-  bool    trigger_was_pressed = false;
-  sw_timer trigger_timeout_timer = 0;
+  // 20 trigger presses while charging resets the learned pack capacity
+  uint8_t  reset_count   = 0;
+  bool     reset_prev    = false;
+  sw_timer reset_timeout = 0;
 
   //Sanity check...
   if (!bms_is_safe_to_charge())
@@ -1012,30 +1241,17 @@ static void bms_handle_charging(void)
      leds_set_led_duty(LEDS_LED_ERR_LEFT,  duty_loc);
      charging_leds_duty = (charging_leds_duty + ((charging_leds_duty > 20) ? 10 : 1)) % ((DUTY_MAX * 2) + 1);
 
-    // Detect trigger pushes for eeprom reset (20 pushes = reset)
+    if (bms_factory_reset_check(&reset_count, &reset_prev, &reset_timeout))
     {
-      bool trigger_now = dio_read(DIO_TRIGGER_PRESSED);
-      if (trigger_now && !trigger_was_pressed)
-      {
-        // Rising edge detected
-        trigger_push_count++;
-        sw_timer_start(&trigger_timeout_timer);
-
-        if (trigger_push_count >= 20)
-        {
-          eeprom_write_defaults();
-          trigger_push_count = 0;
-          leds_off();
-          leds_blink_leds_num(LEDS_LED_ERR_LEFT, 10, 100);
-        }
-      }
-      trigger_was_pressed = trigger_now;
-
-      // If trigger not pressed for >2 seconds, reset counter
-      if (trigger_push_count > 0 && sw_timer_is_elapsed(&trigger_timeout_timer, 2000))
-      {
-        trigger_push_count = 0;
-      }
+      // reset EEPROM and bail out of the charge cycle
+      eeprom_write_defaults();
+      eeprom_write();
+      port_pin_set_output_level(ENABLE_CHARGE_PIN, false);
+      bq7693_disable_charge();
+      leds_off();
+      leds_blink_leds_num(LEDS_LED_ERR_LEFT, 10, 100);
+      bms_state = BMS_CHARGER_CONNECTED;
+      return;
     }
 
     if (!bms_is_safe_to_charge())
@@ -1163,27 +1379,10 @@ static void bms_handle_charging(void)
 static void bms_handle_charger_unplugged(void)
 {
   //Do a little flash to show how out of sync the pack is, then go to idle.
-  uint16_t *cell_voltages = bq7693_get_cell_voltages();
-
-  uint8_t highest_cell = 0;
-  uint8_t lowest_cell = 0;
-
-  for (int i=0; i < 7; ++i)
-  {
-    if (cell_voltages[i] > cell_voltages[highest_cell])
-    {
-      highest_cell = i;
-    }
-    if (cell_voltages[i] < cell_voltages[lowest_cell])
-    {
-      lowest_cell = i;
-    }
-  }
-
-  uint16_t spread = cell_voltages[highest_cell] - cell_voltages[lowest_cell];
+  uint16_t spread = bms_get_cell_spread_mv();
 
   //Flash the error led for 100ms for each 50mV the pack is out of balance
-  for (int i = 0; i < round(spread/50); ++i)
+  for (int i = 0; i < (int)(spread / 50); ++i)
   {
     leds_blink_leds(100);
   }

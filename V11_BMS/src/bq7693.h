@@ -12,7 +12,6 @@
 #define BQ7693_H_
 
 #include <ctype.h>
-#include <math.h>
 #include <inttypes.h>
 #include "asf.h"
 #include "config.h"

@@ -35,8 +35,21 @@
 #define CELL_FULL_CHARGE_VOLTAGE            4170    //mV - fully charged cell voltage. Original BMS serial log shows cells charging to 4.17V.
 #define CELL_FULL_CHARGE_RELEASE_VOLTAGE    4100    //mV - resume charging below this (70mV hysteresis)
 
-#define CELL_OVERVOLTAGE_TRIP               4250    //BMS will trip out at this voltage - NB DO NOT set outside of 3150mV - 4700mV or it wont' work! 
+#define CELL_OVERVOLTAGE_TRIP               4250    //BMS will trip out at this voltage - NB DO NOT set outside of 3150mV - 4700mV or it wont' work!
 #define CELL_UNDERVOLTAGE_TRIP              2450    //BMS will trip out at this voltage - NB DO NOT set outside of 1700mv - 3000mV or it wont' work!
+
+// Cell imbalance.
+// Latches BMS_ERR_CELL_IMBALANCE in EEPROM and blocks charge and discharge
+// until the user runs the 20-press factory reset. Two complementary checks
+// both trip at CELL_IMBALANCE_FAULT_MV:
+//   - Charging: any cell >= CELL_IMBALANCE_NEAR_FULL_MV. Top of charge,
+//     voltages are stable on the taper, single-shot is enough.
+//   - Idle: min cell >= CELL_IMBALANCE_IDLE_MIN_MV. Above the SoC knee in
+//     the flat OCV region. Debounced over CELL_IMBALANCE_IDLE_DEBOUNCE polls.
+#define CELL_IMBALANCE_FAULT_MV             200
+#define CELL_IMBALANCE_NEAR_FULL_MV         4000
+#define CELL_IMBALANCE_IDLE_MIN_MV          3500
+#define CELL_IMBALANCE_IDLE_DEBOUNCE        30
 
 //18650 cell temperature limits from Molicell datasheet.
 #define MAX_PACK_TEMPERATURE                60       //'C - if pack temperature greater than this, no charge/discharge allowed.
@@ -52,7 +65,7 @@
 #define SERIAL_DEBUG                        1 //Serial debug via the spare USART on the programming pins header
 #define PROT_DEBUG_PRINT                    1
 
-// Trigger behaviour: 0 = momentary (hold to run), 1 = toggle (press to run/stop).
-#define TRIGGER_TOGGLE_MODE                 0
+// Trigger behaviour: 0 = momentary (hold to run), 1 = toggle (press to run/stop, hold ≥ 1 s to stop).
+#define TRIGGER_TOGGLE_MODE                 1
 
 #endif /* CONFIG_H_ */
