@@ -53,10 +53,8 @@ static const enum adc_positive_input adc_ch_map_cfg[BMS_ADC_CH_NUM] =
 -----------------------------------------------------------------------------*/
 
 /**
- * @brief Initialise the ADC peripheral for thermistor readings.
- *
- * Configures the SAMD20 ADC in 12-bit single-shot mode with
- * internal VCC/1.48 reference and disables all ADC interrupts.
+ * @brief initialise the ADC, 12-bit single-shot, internal VCC/1.48 reference,
+ *        ADC interrupts are hard-disabled
  */
 void bms_adc_init(void)
 {
@@ -65,17 +63,17 @@ void bms_adc_init(void)
   adc_get_config_defaults(&config_adc);
 
   config_adc.clock_prescaler = ADC_CLOCK_PRESCALER_DIV16;
-  config_adc.reference       = ADC_REFERENCE_INTVCC0; /** 1/1.48V<SUB>CC</SUB> reference */
+  config_adc.reference       = ADC_REFERENCE_INTVCC0;
   config_adc.resolution      = ADC_RESOLUTION_12BIT;
   config_adc.freerunning     = false;
   config_adc.negative_input  = ADC_NEGATIVE_INPUT_GND;
 
-  /* Initial channel does not matter */
+  // any channel works as the initial mux, the first conversion picks one
   config_adc.positive_input  = ADC_POSITIVE_INPUT_PIN7;
 
   adc_init(&adc_instance, ADC, &config_adc);
 
-  /* HARD disable ADC interrupts */
+  // force-disable ADC interrupts
   ADC->INTENCLR.reg = ADC_INTENCLR_MASK;
   ADC->INTFLAG.reg  = ADC_INTFLAG_MASK;
 
@@ -83,13 +81,9 @@ void bms_adc_init(void)
 }
 
 /**
- * @brief Convert a single ADC channel (blocking).
- *
- * Selects the channel mux, triggers a one-shot conversion, and
- * busy-waits until the result is ready.
- *
- * @param ch  ADC channel to convert.
- * @return    12-bit ADC result, or 0xFFFF on error.
+ * @brief one-shot conversion on a single channel, blocks until done
+ * @param ch  ADC channel
+ * @return    12-bit result, or 0xFFFF on error
  */
 uint16_t adc_convert_channel(bms_adc_ch_t ch)
 {
@@ -100,13 +94,9 @@ uint16_t adc_convert_channel(bms_adc_ch_t ch)
   {
     enum adc_positive_input ch_mux = adc_ch_map_cfg[ch];
 
-    /* Select ADC channel */
     adc_set_positive_input(&adc_instance, ch_mux);
-
-    /* Start one-shot conversion */
     adc_start_conversion(&adc_instance);
 
-    /* Poll until conversion is complete */
     do
     {
       status = adc_read(&adc_instance, &result);
@@ -124,10 +114,8 @@ uint16_t adc_convert_channel(bms_adc_ch_t ch)
 }
 
 /**
- * @brief Convert all configured ADC channels sequentially.
- *
- * Results are cached in a local array and can be read back with
- * bms_adc_read_ch().
+ * @brief convert every configured channel and cache the results,
+ *        read them back with bms_adc_read_ch()
  */
 void adc_convert_channels(void)
 {
@@ -138,13 +126,9 @@ void adc_convert_channels(void)
   {
     enum adc_positive_input ch_mux = adc_ch_map_cfg[i];
 
-    /* Select ADC channel */
     adc_set_positive_input(&adc_instance, ch_mux);
-
-    /* Start one-shot conversion */
     adc_start_conversion(&adc_instance);
 
-    /* Poll until conversion is complete */
     do
     {
       status = adc_read(&adc_instance, &result);
@@ -162,10 +146,9 @@ void adc_convert_channels(void)
 }
 
 /**
- * @brief Read the last cached ADC result for a channel.
- *
- * @param ch  ADC channel to read.
- * @return    Cached 12-bit ADC value, or 0xFFFF if the channel is invalid.
+ * @brief read the last cached ADC result for a channel
+ * @param ch  ADC channel
+ * @return    cached 12-bit value, or 0xFFFF on invalid channel
  */
 uint16_t bms_adc_read_ch(bms_adc_ch_t ch)
 {

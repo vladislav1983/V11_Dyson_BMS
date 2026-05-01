@@ -54,15 +54,12 @@ static const uint32_t c_wCRC32Table[16] =
 -----------------------------------------------------------------------------*/
 
 /**
- * @brief Compute CRC32 matching original Dyson firmware.
- *
- * Poly: 0x04C11DB7 (reflected: 0xEDB88320), Init: 0xFFFFFFFF,
- * RefIn/RefOut: true, XorOut: 0xFFFFFFFF.
- * Pads input to 4-byte alignment with zero bytes.
- *
- * @param data  Input data buffer.
- * @param len   Number of bytes to process.
- * @return      CRC32 checksum.
+ * @brief CRC32 matching the stock Dyson firmware
+ *        poly 0x04C11DB7 (reflected 0xEDB88320), init 0xFFFFFFFF,
+ *        RefIn/Out true, XorOut 0xFFFFFFFF, pads to 4-byte alignment with zeros
+ * @param data  input bytes
+ * @param len   byte count
+ * @return      CRC32
  */
 uint32_t calc_crc32(const uint8_t *data, uint16_t len)
 {
@@ -81,14 +78,12 @@ uint32_t calc_crc32(const uint8_t *data, uint16_t len)
 }
 
 /**
- * @brief Compute CRC8 matching original Dyson firmware header checksum.
- *
- * Poly: 0xE0 (reflected), Init: 0xFF, RefIn/RefOut: true, XorOut: 0xFF.
- * Used for 2-byte SIZE field header checksum.
- *
- * @param data  Input data buffer.
- * @param len   Number of bytes to process.
- * @return      CRC8 checksum.
+ * @brief CRC8 matching the stock Dyson header checksum
+ *        poly 0xE0 (reflected), init 0xFF, RefIn/Out true, XorOut 0xFF,
+ *        used over the 2-byte SIZE field
+ * @param data  input bytes
+ * @param len   byte count
+ * @return      CRC8
  */
 uint8_t calc_crc8(const uint8_t *data, uint8_t len)
 {

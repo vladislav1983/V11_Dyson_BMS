@@ -1,22 +1,19 @@
 //
 // dsn_protocol.c
 //
-// Dyson vacuum UART protocol handler — dynamic TLV-based implementation.
-//
-// Replaces the static-template approach in protocol.c with a
-// pair dispatcher that dynamically parses incoming TLV requests and builds
-// response frames at runtime. This correctly handles:
-//   - Rolling counters (echoed from request)
-//   - Variable-length TLV payloads
-//   - All message types via a single generic frame analyzer
-//   - CRC32 with 4-byte-alignment padding
+// Dyson vacuum UART protocol, dynamic TLV implementation: a pair dispatcher
+// parses incoming TLV requests and builds responses at runtime, handles:
+//   - rolling counters echoed from the request
+//   - variable-length TLV payloads
+//   - all message types via a single generic frame analyser
+//   - CRC32 with 4-byte alignment padding
 //   - CRC8 header checksum (poly 0xE0, reflected)
-//   - Byte stuffing (0x12 -> 0xDB 0xDE, 0xDB -> 0xDB 0xDD)
+//   - byte stuffing: 0x12 -> 0xDB 0xDE, 0xDB -> 0xDB 0xDD
 //
-// Frame wire format:
+// wire format:
 //   [0x12] [stuffed frame] [0x12]
 //
-// Frame (after unstuffing):
+// unstuffed frame:
 //   [SIZE_LO] [SIZE_HI] [HDR_CRC8] [DIR] [0xC0] [SRC] [CLASS] [PAYLOAD...] [CRC32 x4]
 //
 // Author : Vladislav Gyurov
@@ -53,13 +50,13 @@
   #define DSN_PRINT(...)
 #endif
 
-// Frame structure
+// frame structure
 #define FRAME_DELIM             0x12
 #define FRAME_MARKER            0xC0
 #define FRAME_DIR_DATA          0x01   // DIR byte for data direction
 #define FRAME_CLASS_RESPONSE    0x01   // CLASS byte: response
 
-// Byte offsets within unstuffed frame (after start delimiter removed)
+// byte offsets within unstuffed frame (after start delimiter removed)
 #define OFF_SIZE_LO             0
 #define OFF_SIZE_HI             1
 #define OFF_HDR_CRC8            2
@@ -70,12 +67,12 @@
 #define OFF_PAYLOAD             7
 #define FRAME_HDR_OVERHEAD      4      // in-frame header (DIR+MARKER+SRC+CLASS) = CRC32 size
 
-// Byte stuffing
+// byte stuffing
 #define STUFF_ESCAPE            0xDB
 #define STUFF_DELIM_REPLACE     0xDE   // 0xDB 0xDE -> 0x12
 #define STUFF_ESCAPE_REPLACE    0xDD   // 0xDB 0xDD -> 0xDB
 
-// Little-endian byte order helpers (wire format is LE)
+// little-endian byte order helpers (wire format is LE)
 #define LE16TOH(buf)        ((uint16_t)(buf)[0] | ((uint16_t)(buf)[1] << 8))
 
 #define LE32TOH(buf)        ((uint32_t)(buf)[0]        | ((uint32_t)(buf)[1] << 8)   | \
@@ -89,13 +86,13 @@
                                  (buf)[2] = (uint8_t)((val) >> 16); \
                                  (buf)[3] = (uint8_t)((val) >> 24); } while(0)
 
-// Buffer sizes
+// buffer sizes
 #define RX_BUF_SIZE             128
 #define TX_BUF_SIZE             160
 #define MAX_RESPONSE_FRAME      140    // max response frame (SIZE+3)
 #define MAX_RESPONSE_PAYLOAD    120    // max payload bytes in response
 
-// Protocol timing
+// protocol timing
 #define TX_WAIT_TICKS           (10 / SW_TIMER_TICK_MS)
 #define SESSION_TIMEOUT_MS      2000
 #define RX_TIMEOUT_MS           5
@@ -121,18 +118,18 @@
 #define TLV_FULL_CHARGE_CAP     0x0201   // 4 bytes: capacity in 0.01 mAh
 #define TLV_WAKEUP_SOURCE       0x810A   // 1 byte: wakeup source
 
-// Handshake configuration
+// handshake configuration
 #define HANDSHAKE_NUM_CELLS     7
 #define HANDSHAKE_MIN_CELL_MV   2650
 #define HANDSHAKE_MAX_CELL_MV   4200
 #define V11_BATTERY_TYPE        0x001F
 #define V11_CAPACITY_001MAH     (PACK_MAX_CAPACITY_MAH * 100u)  // in 0.01 mAh units
 
-// Firmware version string (22 bytes, queried by pair 0x0306)
+// firmware version string (22 bytes, queried by pair 0x0306)
 #define FW_VERSION_STR_LEN      22
 static const char fw_version_str[FW_VERSION_STR_LEN] = "V11-BMS-1.0";
 
-// Motor speed thresholds from trigger messages
+// motor speed thresholds from trigger messages
 #define MOTOR_SPEED_OFF         0
 #define MOTOR_SPEED_IDLE        15000
 #define MOTOR_SPEED_ON          660000
@@ -159,7 +156,7 @@ typedef enum
   RX_COMPLETE,
 } rx_state_t;
 
-// Processing context for frame analyzer — tracks input/output cursors
+// processing context for frame analyzer — tracks input/output cursors
 typedef struct
 {
   const uint8_t *in_ptr;
@@ -216,7 +213,7 @@ static void     handle_sleep(void);
 //    DEFINITION OF GLOBAL FUNCTIONS
 //-----------------------------------------------------------------------------
 
-/** @brief Initialize protocol state machine and flags. */
+/** @brief reset protocol state and flags */
 void dsn_prot_init(void)
 {
   dsn_state = DSN_INIT;
@@ -232,8 +229,8 @@ void dsn_prot_init(void)
 }
 
 /**
- * @brief Set trigger state for protocol responses.
- * @param state  Trigger state to set.
+ * @brief set the trigger flag returned in protocol responses
+ * @param state  new trigger state
  */
 void dsn_prot_set_trigger(bool state)
 {
@@ -242,7 +239,7 @@ void dsn_prot_set_trigger(bool state)
     pending_sleep = false;
 }
 
-/** @brief Reset protocol to initial state. */
+/** @brief soft reset: drop session state but keep init-time configuration */
 void dsn_prot_reset(void)
 {
   dsn_state        = DSN_INIT;
@@ -252,28 +249,22 @@ void dsn_prot_reset(void)
   motor_speed_seen = false;
 }
 
-/**
- * @brief Check if vacuum requested sleep.
- * @return true if sleep requested.
- */
+/** @brief true if the vacuum has requested sleep */
 bool dsn_prot_get_sleep_flag(void)
 {
   return sleep_flag;
 }
 
-/**
- * @brief Check if vacuum is currently connected.
- * @return true if connected.
- */
+/** @brief true if the vacuum is currently in session */
 bool dsn_prot_get_vacuum_connected(void)
 {
   return vacuum_connected;
 }
 
-/** @brief Protocol main loop — poll UART, process frames, manage session timeout. */
+/** @brief protocol main loop, polls UART, processes frames, manages session timeout */
 void dsn_prot_mainloop(void)
 {
-  // Session timeout: no messages for 2 s -> disconnect
+  // session timeout: no messages for SESSION_TIMEOUT_MS means the vacuum is gone
   if (sw_timer_is_elapsed(&session_timer, SESSION_TIMEOUT_MS))
   {
     if (vacuum_connected)
@@ -320,7 +311,7 @@ void dsn_prot_mainloop(void)
         }
       }
 
-      // Motor speed watchdog, mark vacuum disconnected
+      // motor-speed watchdog: nothing for a while → vacuum is gone
       if (   motor_speed_seen
           && sw_timer_is_elapsed(&motor_speed_timer, MOTOR_SPEED_WDT_MS))
       {
@@ -346,10 +337,10 @@ void dsn_prot_mainloop(void)
     //------------------------------------------------------------------------
     case DSN_TX_FRAME:
       serial_send(tx_buf, tx_length);
-      // flush RX 
+      // flush RX state
       rx_level = 0;
       rx_state = RX_INIT;
-      
+
       if (pending_sleep && vacuum_connected && !trigger_state)
       {
         pending_sleep = false;
@@ -361,9 +352,9 @@ void dsn_prot_mainloop(void)
       }
       else
       {
-        // discard sleep request received before handshake completes
+        // drop a sleep request that arrived before handshake completed
         pending_sleep = false;
-        // restart motor speed watchdog and clear flags
+        // restart the motor-speed watchdog
         motor_speed_seen = false;
         sw_timer_start(&motor_speed_timer);
         dsn_state = DSN_WAIT_HANDSHAKE;
@@ -372,7 +363,7 @@ void dsn_prot_mainloop(void)
 
     //------------------------------------------------------------------------
     case DSN_POWER_CYCLE:
-      // wait some time before re-initializing protocol to allow vacuum to fully disconnect
+      // hold off long enough for the vacuum to fully disconnect
       if (sw_timer_is_elapsed(&session_timer, POWER_CYCLE_MS))
         dsn_state = DSN_INIT;
       break;
@@ -398,9 +389,9 @@ void dsn_prot_mainloop(void)
 //-----------------------------------------------------------------------------
 
 /**
- * @brief  RX byte handler: accumulate frame bytes, detect delimiter.
- * @param  ch  Received byte.
- * @return true on complete frame.
+ * @brief  accumulate one RX byte, detects delimiter as end-of-frame
+ * @param  ch  received byte
+ * @return true once a complete frame is in rx_buf
  */
 static bool rx_byte_handler(uint8_t ch)
 {
@@ -411,7 +402,7 @@ static bool rx_byte_handler(uint8_t ch)
     //-------------------------------------------------------------------------
     case RX_INIT:
     case RX_COMPLETE:
-      // Discard bytes until delimiter to re-sync
+      // drop bytes until the next delimiter to re-sync
       if (ch == FRAME_DELIM)
       {
         rx_level = 0;
@@ -451,9 +442,9 @@ static bool rx_byte_handler(uint8_t ch)
 }
 
 /**
- * @brief  In-place byte unstuffing (0xDB 0xDE -> 0x12, 0xDB 0xDD -> 0xDB).
- * @param  buf  Buffer containing stuffed frame (no delimiters).
- * @param  len  Pointer to buffer length; updated to unstuffed length on return.
+ * @brief  in-place unstuffing: 0xDB 0xDE -> 0x12, 0xDB 0xDD -> 0xDB
+ * @param  buf  stuffed frame, no delimiters
+ * @param  len  in/out length, updated to the unstuffed length
  */
 static void frame_unstuff(uint8_t *buf, uint8_t *len)
 {
@@ -484,10 +475,10 @@ static void frame_unstuff(uint8_t *buf, uint8_t *len)
 }
 
 /**
- * @brief  Verify CRC8 over the 2-byte SIZE field.
- * @param  buf      Pointer to frame buffer.
- * @param  len  Length of frame buffer.
- * @return true if valid.
+ * @brief  verify CRC8 over the 2-byte SIZE field
+ * @param  buf      pointer to frame buffer
+ * @param  len  length of frame buffer
+ * @return true if valid
  */
 static bool frame_verify_hdr_crc8(const uint8_t *buf, uint8_t len)
 {
@@ -501,9 +492,9 @@ static bool frame_verify_hdr_crc8(const uint8_t *buf, uint8_t len)
 }
 
 /**
- * @brief  Compute CRC8 for response frame header.
- * @param  buf  Pointer to frame buffer.
- * @return CRC8 byte.
+ * @brief  CRC8 over the 2-byte SIZE field of a response frame
+ * @param  buf  frame buffer
+ * @return CRC8
  */
 static uint8_t frame_compute_hdr_crc8(const uint8_t *buf)
 {
@@ -511,9 +502,9 @@ static uint8_t frame_compute_hdr_crc8(const uint8_t *buf)
 }
 
 /**
- * @brief  Verify CRC32 over frame from DIR to end of payload.
- * @param  buf  Pointer to frame buffer.
- * @return true if valid.
+ * @brief  verify CRC32 covering DIR through end of payload
+ * @param  buf  frame buffer
+ * @return true if valid
  */
 static bool frame_verify_crc32(const uint8_t *buf)
 {
@@ -524,8 +515,8 @@ static bool frame_verify_crc32(const uint8_t *buf)
 }
 
 /**
- * @brief  Compute and append CRC32 to response frame.
- * @param  buf  Pointer to frame buffer.
+ * @brief  compute CRC32 and write it into the frame's trailing CRC slot
+ * @param  buf  frame buffer
  */
 static void frame_append_crc32(uint8_t *buf)
 {
@@ -536,11 +527,11 @@ static void frame_append_crc32(uint8_t *buf)
 }
 
 /**
- * @brief  Byte-stuff frame in-place and add delimiters.
- * @param  buf       Buffer containing frame (output includes delimiters).
- * @param  frame_len Length of the unstuffed frame.
- * @param  buf_size  Total buffer capacity.
- * @return Total stuffed length, 0 on overflow.
+ * @brief  byte-stuff a frame in place and wrap it with delimiters
+ * @param  buf       buffer holding the frame, on return holds the stuffed wire frame
+ * @param  frame_len unstuffed frame length
+ * @param  buf_size  buffer capacity
+ * @return total stuffed length, or 0 on overflow
  */
 static uint8_t frame_stuff(uint8_t *buf, uint8_t frame_len, uint8_t buf_size)
 {
@@ -559,14 +550,15 @@ static uint8_t frame_stuff(uint8_t *buf, uint8_t frame_len, uint8_t buf_size)
       extra++;
   }
 
-  total = 1 + frame_len + extra + 1; // start delimiter + frame data + stuff + end delimiter
+  // start delimiter + frame + stuffing overhead + end delimiter
+  total = 1 + frame_len + extra + 1;
   if (total > buf_size)
-    return 0; // not enough space for stuffed frame
+    return 0;
 
-  dst = (total - 1);         // index for end delimiter
-  buf[dst--] = FRAME_DELIM;  // fill end delimiter
+  dst = (total - 1);
+  buf[dst--] = FRAME_DELIM;  // end delimiter
 
-  // start from back to avoid overwriting unprocessed data
+  // walk the source backwards so we don't overwrite unread bytes
   for (src = (frame_len - 1); src >= 0; src--)
   {
     if (buf[src] == FRAME_DELIM)
@@ -590,8 +582,8 @@ static uint8_t frame_stuff(uint8_t *buf, uint8_t frame_len, uint8_t buf_size)
 }
 
 /**
- * @brief  Process complete received frame: unstuff, verify CRCs, dispatch TLV pairs.
- * @return true if response built in tx_buf.
+ * @brief  process a complete RX frame: unstuff, verify CRCs, dispatch TLV pairs, build response
+ * @return true if a response is ready in tx_buf
  */
 static bool process_rx_frame(void)
 {
@@ -602,17 +594,15 @@ static bool process_rx_frame(void)
   uint16_t resp_payload_len;
   uint16_t resp_size;
 
-  // Unstuff in place
   frame_unstuff(rx_buf, &rx_level);
 
-  // Verify header CRC8
   if (!frame_verify_hdr_crc8(rx_buf, rx_level))
   {
     DSN_PRINT("RX:BAD_CRC8 len=%u hdr=%02X%02X%02X%02X\r\n", rx_level, rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
     return false;
   }
 
-  // Check frame length matches SIZE field
+  // check the SIZE field matches the actual frame length
   size = LE16TOH(&rx_buf[OFF_SIZE_LO]);
 
   if (size < 8 || rx_level != (size + OFF_DIR))
@@ -621,14 +611,13 @@ static bool process_rx_frame(void)
     return false;
   }
 
-  // Verify CRC32
   if (!frame_verify_crc32(rx_buf))
   {
     DSN_PRINT("RX:BAD_CRC32\r\n");
     return false;
   }
 
-  // Handle discovery broadcast (SRC=0xFF): extract payload, no response
+  // discovery broadcast (SRC=0xFF): record source and stay silent
   if (rx_buf[OFF_SRC] == 0xFF)
   {
     payload_len = size - FRAME_HDR_OVERHEAD - 4;
@@ -638,47 +627,42 @@ static bool process_rx_frame(void)
       wakeup_source = LE32TOH(p);
       DSN_PRINT("PROT:DISC 0x%08lX\r\n", wakeup_source);
     }
-    return false;  // no TX for broadcasts
+    return false;
   }
 
-  // Accept SRC=0x01 (standard data) only.
+  // only the standard data source (0x01) is addressed to us
   if (rx_buf[OFF_SRC] != 0x01)
   {
     DSN_PRINT("RX:BAD_SRC 0x%02X\r\n", rx_buf[OFF_SRC]);
     return false;
   }
 
-  // Reset session timer on any valid frame addressed to us
+  // any valid frame keeps the session alive
   sw_timer_start(&session_timer);
 
-  // handshake_key_seen is checked after analyze_frame() below
+  // 0x02 = data request, 0x03 = control request
+  req_class = rx_buf[OFF_CLASS];
 
-  // Extract header fields
-  req_class = rx_buf[OFF_CLASS];  // 0x02 = data req, 0x03 = control req
+  // payload sits after the 4-byte in-frame header and ends before the 4-byte CRC32
+  payload_len = size - FRAME_HDR_OVERHEAD - 4;
 
-  // Payload starts after the 4-byte header (DIR/MARKER/SRC/CLASS)
-  payload_len = size - FRAME_HDR_OVERHEAD - 4;  // subtract CRC32 (4)
-
-  // Set up processing context
   ctx.in_ptr       = &rx_buf[OFF_PAYLOAD];
   ctx.in_remaining = payload_len;
 
-  // Build response frame directly in tx_buf
+  // assemble the response frame directly in tx_buf
   tx_buf[OFF_DIR]    = FRAME_DIR_DATA;
   tx_buf[OFF_MARKER] = FRAME_MARKER;
-  tx_buf[OFF_SRC]    = req_class;  // response SRC = request CLASS (Dyson protocol convention)
+  tx_buf[OFF_SRC]    = req_class;             // Dyson convention: response SRC = request CLASS
   tx_buf[OFF_CLASS]  = FRAME_CLASS_RESPONSE;
 
   ctx.out_ptr       = &tx_buf[OFF_PAYLOAD];
   ctx.out_remaining = MAX_RESPONSE_PAYLOAD;
 
-  // Clear handshake key flag before processing
   handshake_key_seen = false;
 
-  // Run the TLV frame analyzer
   resp_payload_len = analyze_frame(&ctx, req_class);
 
-  // Complete handshake when the startup-only key (TLV_MAX_PACK_V) was queried
+  // the startup-only TLV_MAX_PACK_V query completes the handshake
   if (!vacuum_connected && handshake_key_seen)
   {
     DSN_PRINT("PROT:HS\r\n");
@@ -691,17 +675,15 @@ static bool process_rx_frame(void)
     return false;
   }
 
-  // Compute SIZE = payload + 4 (DIR+MARKER+SRC+CLASS) + 4 (CRC32)
+  // SIZE = payload + 4-byte in-frame header + 4-byte CRC32
   resp_size = resp_payload_len + 4 + 4;
   HTOLE16(&tx_buf[OFF_SIZE_LO], resp_size);
 
-  // Compute and store header CRC8
   tx_buf[OFF_HDR_CRC8] = frame_compute_hdr_crc8(tx_buf);
 
-  // Compute and append CRC32
   frame_append_crc32(tx_buf);
 
-  // Byte-stuff the response frame and wrap with delimiters
+  // stuff in place and wrap with delimiters
   tx_length = frame_stuff(tx_buf, (uint8_t)(resp_size + OFF_DIR), TX_BUF_SIZE);
 
   if (tx_length == 0)
@@ -714,10 +696,10 @@ static bool process_rx_frame(void)
 }
 
 /**
- * @brief  TLV frame analyzer: process pairs from payload, dispatch each, build response.
- * @param  ctx        Processing context tracking input/output cursors.
- * @param  req_class  Request class byte from frame header.
- * @return Bytes written to output.
+ * @brief  walk the TLV pair payload, dispatch each pair and write the response
+ * @param  ctx        processing context (in/out cursors)
+ * @param  req_class  request class from the frame header
+ * @return bytes written to the response payload
  */
 static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
 {
@@ -734,7 +716,7 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
   if (ctx->in_remaining == 0)
     return 0;
 
-  // Copy rolling counter to output
+  // echo the rolling counter (first byte of payload) into the response
   if (ctx->out_remaining > 0)
   {
     *ctx->out_ptr = *ctx->in_ptr;
@@ -745,7 +727,7 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
     total_written++;
   }
 
-  // Process TLV pairs: read 2-byte pair ID, dispatch, write response
+  // pair loop: read the 2-byte pair ID, dispatch, append response
   while (ctx->in_remaining >= 2 && ctx->out_remaining >= 2)
   {
     pair = LE16TOH(ctx->in_ptr);
@@ -757,26 +739,24 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
 
     if (!ok)
     {
-      // Unknown pair — we don't know how many bytes to consume,
-      // so we must stop processing to avoid corrupting subsequent pairs.
+      // unknown pair: we don't know its length, so we can't safely skip it,
+      // stop here to avoid corrupting subsequent pairs
       DSN_PRINT("RX:UNK_PAIR 0x%04X\r\n", pair);
       break;
     }
 
     if (resp_len == 0)
     {
-      // Known pair with no response data (silent ack).
-      continue;
+      continue;                             // silent ack
     }
 
-    // Check space for response pair header + data
     needed = 2 + resp_len;
     if (ctx->out_remaining < needed)
       break;
 
-    // Write response pair header (pair + 1 for response, per Dyson protocol)
+    // response pair ID is request + 1 by convention
     resp_pair = pair + 1;
-    // Special case: TLV read request 0x1002 -> response 0x1001
+    // exception: TLV read 0x1002 → response 0x1001
     if (pair == PAIR_TLV_READ)
       resp_pair = PAIR_TLV_READ_RES;
 
@@ -785,7 +765,6 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
     ctx->out_remaining -= 2;
     total_written      += 2;
 
-    // Copy response data
     memcpy(ctx->out_ptr, resp_data, resp_len);
     ctx->out_ptr       += resp_len;
     ctx->out_remaining -= resp_len;
@@ -796,14 +775,14 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
 }
 
 /**
- * @brief  Dispatch a TLV pair: consume input bytes and produce response data.
+ * @brief  dispatch one TLV pair: consume input bytes, produce response bytes
  *
- * @param in_ctx    Processing context (input cursor advanced on success).
- * @param pair      16-bit pair ID from the incoming frame.
- * @param out_data  Buffer for response payload.
- * @param out_size  Size of out_data buffer in bytes.
- * @param out_len   Number of response bytes written.
- * @return true if pair is known, false to abort frame processing.
+ * @param in_ctx    context, input cursor is advanced only on success
+ * @param pair      16-bit pair ID
+ * @param out_data  destination buffer
+ * @param out_size  capacity of out_data
+ * @param out_len   bytes written to out_data
+ * @return true if the pair is known, false aborts the rest of the frame
  */
 static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, uint16_t out_size, uint16_t *out_len)
 {
@@ -855,7 +834,7 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       if (out_size < 4 + val_len)
         return true;
 
-      // Output format: [REG] [TYPE] [LEN_LO] [LEN_HI] [DATA...]
+      // output format: [REG] [TYPE] [LEN_LO] [LEN_HI] [DATA...]
       out_data[0] = reg;
       out_data[1] = type;
       HTOLE16(&out_data[2], val_len);
@@ -934,8 +913,8 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
 }
 
 /**
- * @brief  TLV register dispatcher: map (TYPE<<8)|REG keys to BMS sensor values.
- * @return true if key known.
+ * @brief  map a (TYPE<<8)|REG key to a BMS sensor value
+ * @return true if the key is known
  */
 static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len)
 {
@@ -1029,7 +1008,7 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
 }
 
 /**
- * @brief  Build 6-byte trigger response: [ack_speed LE 4B] [0x00] [flags 1B].
+ * @brief  build the 6-byte motor-speed response: [ack_speed LE 4B] [0x00] [flags 1B]
  */
 static void build_trigger_response(uint8_t *out_data, uint16_t *out_len)
 {
@@ -1055,9 +1034,7 @@ static void build_trigger_response(uint8_t *out_data, uint16_t *out_len)
   *out_len = 6;
 }
 
-/**
- * @brief  Enter sleep state: set flags, disable precharge, transition to DSN_SLEEP.
- */
+/** @brief enter DSN_SLEEP: set flags, drop precharge, snapshot charger state */
 static void handle_sleep(void)
 {
   sleep_flag       = true;

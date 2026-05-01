@@ -52,11 +52,9 @@ static void bms_wdt_early_warning_callback(void);
 -----------------------------------------------------------------------------*/
 
 /**
- * @brief Initialise the SAMD20 hardware watchdog.
- *
- * Configures WDT with a 16384-clock timeout, registers an early-warning
- * callback that shuts down charge/discharge FETs, and starts the
- * periodic kick timer.
+ * @brief initialise the hardware watchdog,
+ *        timeout 1024 clk, early warning at 512 clk, registers the callback
+ *        and starts the periodic kick timer
  */
 void bms_wdt_init(void)
 {
@@ -74,11 +72,7 @@ void bms_wdt_init(void)
   sw_timer_start(&wdt_timer);
 }
 
-/**
- * @brief Disable the hardware watchdog.
- *
- * Unregisters the early-warning callback and disables the WDT peripheral.
- */
+/** @brief disable the watchdog, unregisters the callback and turns off the peripheral */
 void bms_wdt_deinit(void)
 {
   struct wdt_conf config_wdt;
@@ -89,11 +83,7 @@ void bms_wdt_deinit(void)
   wdt_set_config(&config_wdt);
 }
 
-/**
- * @brief Periodic watchdog kick — call from the main loop.
- *
- * Resets the WDT counter every WDT_TIMER_MS milliseconds.
- */
+/** @brief watchdog kick, call from the main loop, resets the counter every WDT_TIMER_MS */
 void bms_wdt_mainloop(void)
 {
   if(true == sw_timer_is_elapsed(&wdt_timer, WDT_TIMER_MS))
@@ -107,12 +97,7 @@ void bms_wdt_mainloop(void)
     DEFINITION OF LOCAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 
-/**
- * @brief WDT early-warning interrupt callback.
- *
- * Disables both charge and discharge FETs as a safety measure
- * before the watchdog resets the MCU.
- */
+/** @brief early-warning callback, force a fault before the WDT resets the MCU */
 static void bms_wdt_early_warning_callback(void)
 {
   bms_force_fault(BMS_ERR_WDT);

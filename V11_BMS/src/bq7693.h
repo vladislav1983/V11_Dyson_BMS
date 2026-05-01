@@ -16,7 +16,7 @@
 #include "asf.h"
 #include "config.h"
 
-//I2C address of the device
+// I2C address of the device
 #define BQ7693_ADDR 0x08
 #define BQ7693_TIMEOUT 100
 

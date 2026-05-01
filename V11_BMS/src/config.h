@@ -4,68 +4,67 @@
  * Author :  David Pye
  *  Contact: davidmpye@gmail.com
  *  License: GNU GPL v3 or later
- */ 
+ */
 
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-// Pin definitions
+// pin assignments
 #define LED_ERR_RIGHT                       PIN_PA00
 #define LED_ERR_LEFT                        PIN_PA19
 
-//Battery charge/discharge indicators
+// drives Q3 on the charger inlet, pull high to accept charge, verified on V11 and V15
+#define ENABLE_CHARGE_PIN                   PIN_PA01
 
-//- seems to go to Q3 on the charger inlet side of things, push it high to accept a charge
-#define ENABLE_CHARGE_PIN                   PIN_PA01 // For V15 & V11 charging confirmed
-
-//PA28 appears to be ALERT pin from the BQ7693
+// BQ7693 ALERT line
 #define BQ7693_ALERT_PIN                    PIN_PA28
 
- //NB Goes high when trigger pulled, but don't have it pulled up or down..
+// high while trigger is pulled, do not pull up or down
 #define TRIGGER_PRESSED_PIN                 PIN_PA04
-//Goes high when charger plugged in.
+// high while charger is plugged in
 #define CHARGER_CONNECTED_PIN               PIN_PA06
 #define MODE_BUTTON_PIN                     PIN_PA09
 #define MODE_BUTTON_PULLUP_ENABLE_PIN       PIN_PA18
 #define PRECHARGE_PIN                       PIN_PA24
 
 #define PACK_MAX_CAPACITY_MAH               3600
-#define CELL_LOWEST_DISCHARGE_VOLTAGE       2500  //mV - wont allow pack to discharge if any cells lower than this
-#define CELL_LOWEST_CHARGE_VOLTAGE          2000    //mV - won't try to charge the pack if any cells lower than this
-#define CELL_FULL_CHARGE_VOLTAGE            4170    //mV - fully charged cell voltage. Original BMS serial log shows cells charging to 4.17V.
-#define CELL_FULL_CHARGE_RELEASE_VOLTAGE    4100    //mV - resume charging below this (70mV hysteresis)
+#define CELL_LOWEST_DISCHARGE_VOLTAGE       2500    // mV, below this no discharge
+#define CELL_LOWEST_CHARGE_VOLTAGE          2000    // mV, below this no charge
+#define CELL_FULL_CHARGE_VOLTAGE            4170    // mV, stock firmware target
+#define CELL_FULL_CHARGE_RELEASE_VOLTAGE    4100    // mV, resume charging below this (70 mV hysteresis)
 
-#define CELL_OVERVOLTAGE_TRIP               4250    //BMS will trip out at this voltage - NB DO NOT set outside of 3150mV - 4700mV or it wont' work!
-#define CELL_UNDERVOLTAGE_TRIP              2450    //BMS will trip out at this voltage - NB DO NOT set outside of 1700mv - 3000mV or it wont' work!
+#define CELL_OVERVOLTAGE_TRIP               4250    // BQ7693 OV trip, valid range 3150-4700 mV
+#define CELL_UNDERVOLTAGE_TRIP              2450    // BQ7693 UV trip, valid range 1700-3000 mV
 
-// Cell imbalance.
-// Latches BMS_ERR_CELL_IMBALANCE in EEPROM and blocks charge and discharge
-// until the user runs the 20-press factory reset. Two complementary checks
+// cell imbalance
+// latches BMS_ERR_CELL_IMBALANCE in EEPROM and blocks charge and discharge
+// until the user runs the 20-press factory reset, two complementary checks
 // both trip at CELL_IMBALANCE_FAULT_MV:
-//   - Charging: any cell >= CELL_IMBALANCE_NEAR_FULL_MV. Top of charge,
-//     voltages are stable on the taper, single-shot is enough.
-//   - Idle: min cell >= CELL_IMBALANCE_IDLE_MIN_MV. Above the SoC knee in
-//     the flat OCV region. Debounced over CELL_IMBALANCE_IDLE_DEBOUNCE polls.
+//   - charging: any cell >= CELL_IMBALANCE_NEAR_FULL_MV, top of charge,
+//     voltages are stable on the taper, single-shot is enough
+//   - idle: min cell >= CELL_IMBALANCE_IDLE_MIN_MV, above the SoC knee in
+//     the flat OCV region, debounced over CELL_IMBALANCE_IDLE_DEBOUNCE polls
 #define CELL_IMBALANCE_FAULT_MV             200
 #define CELL_IMBALANCE_NEAR_FULL_MV         4000
 #define CELL_IMBALANCE_IDLE_MIN_MV          3500
 #define CELL_IMBALANCE_IDLE_DEBOUNCE        30
 
-//18650 cell temperature limits from Molicell datasheet.
-#define MAX_PACK_TEMPERATURE                60       //'C - if pack temperature greater than this, no charge/discharge allowed.
-#define MIN_PACK_CHARGE_TEMP                0        //'C - if less than this, no charge.
-#define MIN_PACK_DISCHARGE_TEMP             -40      //'C - if less than this, no discharge
-// Limits disabled, as V15 & V11 have 2xRTDs, now unknown where are assigned, therefore even max temp doesnt work
-// Do not charge battery when hot and not supervised! This is for Debug only for V15, battery pack outputs 24V
+// 18650 temperature limits (Molicel datasheet)
+#define MAX_PACK_TEMPERATURE                60       // °C, above this no charge or discharge
+#define MIN_PACK_CHARGE_TEMP                0        // °C, below this no charge
+#define MIN_PACK_DISCHARGE_TEMP             -40      // °C, below this no discharge
+// V11/V15 packs use two RTDs and the assignment is unclear, so these
+// limits are not currently enforced, do not charge a hot pack unattended,
+// for V15 debug only — pack outputs 24 V
 
-#define IDLE_TIME                           60 * 30 // Idle time in seconds. Pack will go into SHIP/deep sleep mode if nothing happens in this duration
+#define IDLE_TIME                           60 * 30 // seconds before SHIP/deep sleep when nothing happens
 
-#define FULL_CHARGE_PAUSE_COUNT             3 //Once a cell reaches max charge volts, pause for 30 seconds and retry, this many times.
+#define FULL_CHARGE_PAUSE_COUNT             3 // pause/retry passes after first reaching the full-charge threshold
 
-#define SERIAL_DEBUG                        1 //Serial debug via the spare USART on the programming pins header
+#define SERIAL_DEBUG                        1 // debug UART on the programming-header USART
 #define PROT_DEBUG_PRINT                    1
 
-// Trigger behaviour: 0 = momentary (hold to run), 1 = toggle (press to run/stop, hold ≥ 1 s to stop).
+// trigger behaviour: 0 = momentary (hold to run), 1 = toggle (press to run/stop, hold ≥ 1 s to stop)
 #define TRIGGER_TOGGLE_MODE                 1
 
 #endif /* CONFIG_H_ */

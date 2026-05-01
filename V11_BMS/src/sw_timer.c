@@ -52,12 +52,7 @@ static void tc_callback_sw_timer(struct tc_module *const module_inst);
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 
-/**
- * @brief Initialise the software timer system.
- *
- * Configures TC0 in match-frequency mode to generate a 1 ms tick
- * interrupt driven by GCLK1.
- */
+/** @brief bring up the software timer: TC0 match-frequency, 1 ms tick from GCLK1 */
 void sw_timer_init(void)
 {
   struct tc_config config_tc;
@@ -79,11 +74,8 @@ void sw_timer_init(void)
 }
 
 /**
- * @brief Start (or restart) a software timer.
- *
- * Captures the current tick count as the timer's reference point.
- *
- * @param sw_timer_ptr  Pointer to the timer variable.
+ * @brief start or restart a timer, captures the current tick as t0
+ * @param sw_timer_ptr  timer variable
  */
 void sw_timer_start(sw_timer * sw_timer_ptr)
 {
@@ -91,11 +83,8 @@ void sw_timer_start(sw_timer * sw_timer_ptr)
 }
 
 /**
- * @brief Stop a software timer.
- *
- * Sets the timer to zero, which is the reserved "stopped" value.
- *
- * @param sw_timer_ptr  Pointer to the timer variable.
+ * @brief stop a timer, sets it to 0 (the reserved "stopped" value)
+ * @param sw_timer_ptr  timer variable
  */
 void sw_timer_stop(sw_timer * sw_timer_ptr)
 {
@@ -103,15 +92,12 @@ void sw_timer_stop(sw_timer * sw_timer_ptr)
 }
 
 /**
- * @brief Check whether a software timer is running.
- *
- * @param sw_timer_ptr  Pointer to the timer variable.
- * @return true if the timer is running, false if stopped.
+ * @brief true if the timer is running
+ * @param sw_timer_ptr  timer variable
  */
 bool sw_timer_is_started(sw_timer * sw_timer_ptr)
 {
-  // A timer is never equal to 0
-  // The 0 value is reserved to the timer stopped
+  // 0 is reserved for "stopped"
   if (*sw_timer_ptr != 0)
     return(1);
 
@@ -119,21 +105,16 @@ bool sw_timer_is_started(sw_timer * sw_timer_ptr)
 }
 
 /**
- * @brief Check whether a software timer has elapsed.
- *
- * If the timeout has been reached the timer is automatically stopped.
- * Handles tick-counter wrap-around correctly.
- *
- * @param sw_timer_ptr  Pointer to the timer variable.
- * @param timeout       Timeout in milliseconds.
- * @return true if the timer has elapsed (or was already stopped).
+ * @brief true if the timer has run for at least `timeout` ms (or was stopped),
+ *        on expiry the timer is auto-stopped, handles tick-counter wrap-around
+ * @param sw_timer_ptr  timer variable
+ * @param timeout       timeout, ms
  */
 bool sw_timer_is_elapsed(sw_timer * sw_timer_ptr, uint32_t timeout)
 {
   uint32_t Delay;
 
-  // A timer is never equal to 0
-  // The 0 value is reserved to the timer stopped
+  // 0 is reserved for "stopped"
   if (*sw_timer_ptr == 0)
   {
     return true;
@@ -146,14 +127,13 @@ bool sw_timer_is_elapsed(sw_timer * sw_timer_ptr, uint32_t timeout)
 
     if(ticks < *sw_timer_ptr)
     {
-      // The 0 value had been "jump" so we must substract 1 to the delay
+      // tick counter skipped over 0, subtract 1 to compensate
       --Delay;
     }
 
     if ((Delay > timeout) || (timeout == 0))
     {
-      // The timer is stopped or elapsed
-      *sw_timer_ptr = 0;
+      *sw_timer_ptr = 0;                   // auto-stop
       return true;
     }
   }
@@ -162,17 +142,14 @@ bool sw_timer_is_elapsed(sw_timer * sw_timer_ptr, uint32_t timeout)
 }
 
 /**
- * @brief Return the time elapsed since a timer was started.
- *
- * @param sw_timer_ptr  Pointer to the timer variable.
- * @return Elapsed time in milliseconds, or 0 if the timer is stopped.
+ * @brief time elapsed since the timer was started, in ms, 0 if stopped
+ * @param sw_timer_ptr  timer variable
  */
 sw_timer sw_timer_get_elapsed_time(sw_timer * sw_timer_ptr)
 {
   uint32_t Delay;
 
-  // A timer is never equal to 0
-  // The 0 value is reserved to the timer stopped
+  // 0 is reserved for "stopped"
   if ( *sw_timer_ptr == 0 )
   {
     Delay = 0;
@@ -185,7 +162,7 @@ sw_timer sw_timer_get_elapsed_time(sw_timer * sw_timer_ptr)
 
     if(ticks < *sw_timer_ptr)
     {
-      // The 0 value had been "jump" so we must substract 1 to the delay
+      // tick counter skipped over 0, subtract 1 to compensate
       --Delay;
     }
   }
@@ -194,12 +171,9 @@ sw_timer sw_timer_get_elapsed_time(sw_timer * sw_timer_ptr)
 }
 
 /**
- * @brief Blocking delay using the software timer system.
- *
- * Spins in a loop calling SW_TIMER_SERVICES() until the requested
- * delay has elapsed.
- *
- * @param sw_timer_delay_ms  Delay in milliseconds.
+ * @brief blocking delay built on top of sw_timer_is_elapsed(),
+ *        calls SW_TIMER_SERVICES() while waiting
+ * @param sw_timer_delay_ms  delay, ms
  */
 void sw_timer_delay_ms(uint32_t sw_timer_delay_ms)
 {
@@ -216,29 +190,22 @@ void sw_timer_delay_ms(uint32_t sw_timer_delay_ms)
 -----------------------------------------------------------------------------*/
 
 /**
- * @brief TC0 compare-match callback — increments the global tick counter.
- *
- * Skips the zero value so that zero remains reserved for "stopped" timers.
- *
- * @param module_inst  Pointer to the TC module instance (unused).
+ * @brief TC0 compare-match callback, bumps the millisecond tick counter and
+ *        skips the value 0 so it stays reserved for "stopped"
+ * @param module_inst  unused
  */
 static void tc_callback_sw_timer(struct tc_module *const module_inst)
 {
   sw_timer_clock++;
 
-  // A timer is never equal to 0
-  // The 0 value is reserved to the timer stopped
+  // skip the reserved "stopped" value
   if(sw_timer_clock == 0)
   {
     sw_timer_clock++;
   }
 }
 
-/**
- * @brief Return the current millisecond tick count.
- *
- * @return Current value of the global tick counter.
- */
+/** @brief current millisecond tick count */
 static uint32_t get_ticks_ms(void)
 {
   return sw_timer_clock;

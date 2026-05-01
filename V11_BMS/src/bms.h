@@ -34,24 +34,24 @@ enum BMS_STATE
   BMS_CHARGER_CONNECTED_NOT_CHARGING,
   BMS_CHARGER_UNPLUGGED,
   BMS_VACUUM_RUNNING,
-  BMS_FAULT, //error code should be logged to explain why!
+  BMS_FAULT,                 // bms_error holds the cause
   BMS_SLEEP,
 };
 
 enum BMS_ERROR_CODE
 {
-  BMS_ERR_NONE,            // 0  All good!
-  BMS_ERR_PACK_DISCHARGED, // 1  Pack is flat - not really a bad error....
-  BMS_ERR_UNDERVOLTAGE,    // 2  BMS IC undervoltage trip - flat pack, detected by BQ.
-  BMS_ERR_PACK_UNDERTEMP,  // 3  Pack is below -40 if attempting discharge, or 0 if attempting charge.
-  BMS_ERR_PACK_OVERTEMP,   // 4  Pack thermistor reading exceeded MAX_PACK_TEMPERATURE - default 60'C
-  BMS_ERR_CELL_FAIL,       // 5  A cell voltage is below safe minimum.
-  BMS_ERR_OVERVOLTAGE,     // 6  BMS IC overvoltage trip
-  BMS_ERR_OVERCURRENT,     // 7  BMS IC overcurrent trip
-  BMS_ERR_SHORTCIRCUIT,    // 8  BMS IC short circuit trip
-  BMS_ERR_I2C_FAIL,        // 9  Unable to talk to the BQ7693 IC - very bad!
-  BMS_ERR_WDT,             // 10 Watchdog early warning fired - main loop stalled!
-  BMS_ERR_CELL_IMBALANCE,  // 11 Cell spread exceeded CELL_IMBALANCE_FAULT_MV.
+  BMS_ERR_NONE,            // 0  no error
+  BMS_ERR_PACK_DISCHARGED, // 1  pack flat
+  BMS_ERR_UNDERVOLTAGE,    // 2  BQ7693 undervoltage trip
+  BMS_ERR_PACK_UNDERTEMP,  // 3  below -40 °C (discharge) or 0 °C (charge)
+  BMS_ERR_PACK_OVERTEMP,   // 4  pack temperature above MAX_PACK_TEMPERATURE
+  BMS_ERR_CELL_FAIL,       // 5  cell below the safe minimum
+  BMS_ERR_OVERVOLTAGE,     // 6  BQ7693 overvoltage trip
+  BMS_ERR_OVERCURRENT,     // 7  BQ7693 overcurrent trip
+  BMS_ERR_SHORTCIRCUIT,    // 8  BQ7693 short-circuit trip
+  BMS_ERR_I2C_FAIL,        // 9  BQ7693 I²C communication failure
+  BMS_ERR_WDT,             // 10 watchdog early warning fired (main loop stalled)
+  BMS_ERR_CELL_IMBALANCE,  // 11 cell spread exceeded CELL_IMBALANCE_FAULT_MV
 };
 
 /*-----------------------------------------------------------------------------

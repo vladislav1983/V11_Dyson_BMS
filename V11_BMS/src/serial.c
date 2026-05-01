@@ -31,9 +31,7 @@ static volatile uint8_t rx_ring_tail;   // serial_rx_byte reads here
     DEFINITION OF INTERRUPT HANDLERS
 -----------------------------------------------------------------------------*/
 
-/**
- * @brief SERCOM2 RX interrupt handler — store received bytes into ring buffer.
- */
+/** @brief SERCOM2 RX ISR, pushes incoming bytes into the ring buffer */
 void SERCOM2_Handler_BMS(void)
 {
   SercomUsart *const hw = &(SERCOM2->USART);
@@ -42,10 +40,10 @@ void SERCOM2_Handler_BMS(void)
                          SERCOM_USART_STATUS_PERR |
                          SERCOM_USART_STATUS_BUFOVF))
   {
+    // acknowledge errors but keep the byte that triggered them
     hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
                      SERCOM_USART_STATUS_PERR |
                      SERCOM_USART_STATUS_BUFOVF;
-    // do not discard data
   }
 
   if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_RXC)
@@ -64,9 +62,7 @@ void SERCOM2_Handler_BMS(void)
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 
-/**
- * @brief Initialize Dyson vacuum UART (SERCOM2, 115200 baud, RX only at start).
- */
+/** @brief bring up the Dyson UART on SERCOM2: 115200 8N1, RX-only at start */
 void serial_init()
 {
   struct system_pinmux_config pin_conf;
@@ -94,7 +90,7 @@ void serial_init()
   usart_enable(&usart_instance);
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_TX);
 
-  // Enable RXC interrupt for ring buffer reception
+  // RX-complete interrupt feeds the ring buffer
   rx_ring_head = 0;
   rx_ring_tail = 0;
   {
@@ -105,10 +101,9 @@ void serial_init()
 }
 
 /**
- * @brief Read one byte from the RX ring buffer (filled by SERCOM2 ISR).
- *
- * @param ch  Pointer to store the received byte.
- * @return    true if a byte was available, false if buffer empty.
+ * @brief pop one byte from the RX ring buffer
+ * @param ch  receives the byte
+ * @return    true if a byte was available, false otherwise
  */
 bool serial_rx_byte(uint8_t *ch)
 {
@@ -120,30 +115,26 @@ bool serial_rx_byte(uint8_t *ch)
   return true;
 }
 
-/**
- * @brief Check if RX ring buffer has data available.
- * @return true if one or more bytes are buffered.
- */
+/** @brief true if the RX ring buffer has at least one byte waiting */
 bool serial_rx_available(void)
 {
   return (rx_ring_tail != rx_ring_head);
 }
 
 /**
- * @brief Half-duplex TX: switch to transmit, send buffer, switch back to receive.
- *
- * @param buff_ptr   Pointer to transmit buffer.
- * @param buff_size  Number of bytes to send.
+ * @brief half-duplex send: switch to TX, write, switch back to RX
+ * @param buff_ptr   TX buffer
+ * @param buff_size  bytes to send
  */
 void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
 {
   SercomUsart *const hw = &(usart_instance.hw->USART);
 
-  /* Disable RX interrupt before switching to TX mode */
+  // mask RX before switching direction
   hw->INTENCLR.reg = SERCOM_USART_INTENCLR_RXC;
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_RX);
 
-  /* Flush stale RX data and errors before switching to TX */
+  // drop any stale RX data and error flags before driving the line
   hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
                    SERCOM_USART_STATUS_PERR |
                    SERCOM_USART_STATUS_BUFOVF;
@@ -154,7 +145,7 @@ void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
   usart_write_buffer_wait(&usart_instance, buff_ptr, buff_size);
   usart_disable_transceiver(&usart_instance, USART_TRANSCEIVER_TX);
 
-  /* Clear errors/noise from the TX period before re-enabling RX */
+  // clear errors/noise picked up during the transmit window
   hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
                    SERCOM_USART_STATUS_PERR |
                    SERCOM_USART_STATUS_BUFOVF;
@@ -163,7 +154,7 @@ void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
 
   usart_enable_transceiver(&usart_instance, USART_TRANSCEIVER_RX);
 
-  /* Flush ring buffer (TX echoes noise) and re-enable RX interrupt */
+  // discard ring contents (TX self-echo) and re-enable RX interrupt
   rx_ring_head = 0;
   rx_ring_tail = 0;
   hw->INTENSET.reg = SERCOM_USART_INTENSET_RXC;

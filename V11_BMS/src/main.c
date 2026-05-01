@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief Entry point for Dyson V11/V15 BMS firmware.
+ * @brief entry point for the Dyson V11/V15 BMS firmware
  *
  * Author :  David Pye
  *  Contact: davidmpye@gmail.com
@@ -9,13 +9,9 @@
 
 #include "bms.h"
 
-/**
- * @brief Application entry point. Initializes BMS and enters main loop.
- * @return Never returns.
- */
+/** @brief initialise the BMS and enter the main loop, never returns */
 int main(void)
 {
   bms_init();
   bms_mainloop();
-  //never returns.
 }

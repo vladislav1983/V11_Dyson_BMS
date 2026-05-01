@@ -75,13 +75,13 @@ static const dio_cfg_t dio_cfg[DIO_NUM] =
 -----------------------------------------------------------------------------*/
 
 /**
- * @brief Initialise the digital I/O module.
+ * @brief initialise the DIO module
  *
- * Seeds each channel's debounced value from the live pin level so the very
- * first dio_read() returns the truth, then starts the periodic task timer.
- * Without seeding, every input reads as 0 until the first mainloop tick,
+ * seeds each channel's debounced value from the live pin level so the very
+ * first dio_read() returns the truth, then starts the periodic task timer,
+ * without seeding, every input reads as 0 until the first mainloop tick,
  * which is long enough for an early consumer (e.g. bms_trigger_active() in
- * toggle mode) to see a phantom 0->1 transition.
+ * toggle mode) to see a phantom 0→1 transition
  */
 void dio_init(void)
 {
@@ -95,11 +95,7 @@ void dio_init(void)
   sw_timer_start(&task_timer);
 }
 
-/**
- * @brief Periodic DIO task — poll and debounce every digital input.
- *
- * Called from the main loop.  Runs every DIO_TASK_TICKS milliseconds.
- */
+/** @brief DIO task, call from the main loop, samples and debounces every DIO_TASK_TICKS */
 void dio_mainloop(void)
 {
   bool in;
@@ -121,10 +117,9 @@ void dio_mainloop(void)
 }
 
 /**
- * @brief Read the debounced value of a digital input.
- *
- * @param dio  Channel index (DIO_CHARGER_CONNECTED, etc.).
- * @return     true if the input is active, false otherwise.
+ * @brief read the debounced value of a digital input
+ * @param dio  channel index
+ * @return     true if active, false otherwise
  */
 bool dio_read(dio_type_t dio)
 {
@@ -139,17 +134,15 @@ bool dio_read(dio_type_t dio)
 }
 
 /**
- * @brief Generic debounce algorithm.
+ * @brief generic debounce step, counts consecutive matching samples and
+ *        commits the value to the output once the counter expires
  *
- * Counts consecutive samples where the current value matches value_old.
- * When the counter reaches zero the debounced output is updated.
- *
- * @param value                    Current raw input sample.
- * @param value_old                Previous raw input sample.
- * @param debounced_value          Pointer to the debounced output.
- * @param debounce_counter         Pointer to the remaining tick counter.
- * @param debounce_counter_preset  Number of ticks required for a stable reading.
- * @return true when the debounce has settled, false while counting.
+ * @param value                    current sample
+ * @param value_old                previous sample
+ * @param debounced_value          output pointer
+ * @param debounce_counter         in/out tick counter
+ * @param debounce_counter_preset  ticks needed for a stable reading
+ * @return true when settled, false while counting
  */
 bool dio_debounce(uint8_t value, uint8_t value_old, uint8_t *debounced_value, uint16_t *debounce_counter, uint16_t debounce_counter_preset)
 {
@@ -175,7 +168,7 @@ bool dio_debounce(uint8_t value, uint8_t value_old, uint8_t *debounced_value, ui
   if (*debounce_counter == 0)
   {
     debounce_finished = true;
-    *debounced_value = value;                       /* latest value is considered to be the new debounced value */
+    *debounced_value = value;                       // latest sample becomes the new debounced value
   }
 
   return debounce_finished;

@@ -10,7 +10,8 @@
 volatile struct eeprom_data eeprom_data;
 
 /**
- * @brief Write factory default values to EEPROM (capacity reset).
+ * @brief reset EEPROM contents to factory defaults and commit,
+ *        zeros the whole struct then sets the non-zero fields
  */
 void eeprom_write_defaults(void)
 {
@@ -21,12 +22,9 @@ void eeprom_write_defaults(void)
 }
 
 /**
- * @brief Initialize EEPROM emulator, program fuses if needed, verify stored data.
- *
- * If EEPROM fuses are not set, programs them and resets the MCU.
- * On first use or CRC mismatch, writes factory defaults.
- *
- * @return ASF status code from eeprom_emulator_init().
+ * @brief bring up the EEPROM emulator, programs fuses on first use and
+ *        rewrites defaults on a CRC mismatch or invalid fields
+ * @return ASF status from eeprom_emulator_init()
  */
 int eeprom_init(void)
 {
@@ -34,36 +32,34 @@ int eeprom_init(void)
 
   if (error_code == STATUS_ERR_NO_MEMORY)
   {
-    //We are here because the fuses are set to 0x07, meaning eeprom is not enabled.
-    //Show a few slow flashes to make it clear we're up to something, then reprogram fuses and reset
-    //the mcu.
+    // fuses are still 0x07, EEPROM is disabled, flash a few slow blinks so
+    // the user knows we're doing something, then program the fuses (which
+    // resets the MCU)
     for (int i=0; i<4; ++i)
     {
       leds_blink_leds(2000);
     }
-    //This will update the fuses then reset the MCU
-    eeprom_fuses_set();
+    eeprom_fuses_set();                    // does not return
   }
   else if (error_code != STATUS_OK)
   {
-    //Init/format the eeprom
+    // wipe and reformat
     eeprom_emulator_erase_memory();
     error_code = eeprom_emulator_init();
     eeprom_write_defaults();
   }
   else
   {
-    //EEPROM emulator OK - read data and verify CRC
+    // emulator is happy, load and validate
     if (eeprom_read() != 0)
     {
-      //CRC mismatch - data corrupted, reinitialize with defaults
-      eeprom_write_defaults();
+      eeprom_write_defaults();             // CRC mismatch
     }
     else if (eeprom_data.full_discharge_seen > 1 || eeprom_data.imbalance_locked > 1)
     {
-      // Boolean byte outside {0,1} means uninitialised (erased flash = 0xFF)
-      // or written by a firmware whose struct layout did not cover this byte.
-      // Treat as corrupt and rewrite.
+      // a boolean byte outside {0,1} means uninitialised (erased flash = 0xFF)
+      // or written by a firmware whose struct layout didn't cover this byte,
+      // treat as corrupt and rewrite
       eeprom_write_defaults();
     }
   }
@@ -72,9 +68,8 @@ int eeprom_init(void)
 }
 
 /**
- * @brief Read EEPROM page and verify CRC32 integrity.
- *
- * @return 0 on success, -1 on CRC mismatch.
+ * @brief read EEPROM page 0 and verify the CRC
+ * @return 0 on success, -1 on CRC mismatch
  */
 int eeprom_read(void)
 {
@@ -82,23 +77,21 @@ int eeprom_read(void)
   eeprom_emulator_read_page(0, buffer);
   memcpy((void*)&eeprom_data, buffer, sizeof(eeprom_data));
 
-  //Verify CRC over data fields (everything before the crc32 field)
+  // CRC covers every byte before the crc32 field
   uint32_t calc = calc_crc32((const uint8_t *)&eeprom_data,
       sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
   if (calc != eeprom_data.crc32) {
-    return -1;  //CRC mismatch - data corrupted
+    return -1;
   }
   return 0;
 }
 
 /**
- * @brief Compute CRC32 and write EEPROM page.
- *
- * @return 0 on success.
+ * @brief compute CRC and write EEPROM page 0
+ * @return always 0
  */
 int eeprom_write(void)
 {
-  //Compute CRC over data fields (everything before the crc32 field)
   eeprom_data.crc32 = calc_crc32((const uint8_t *)&eeprom_data,
       sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
 
@@ -110,13 +103,11 @@ int eeprom_write(void)
 }
 
 /**
- * @brief Program NVM fuses to enable 1024-byte EEPROM, then reset MCU.
- *
- * @return Never returns (triggers NVIC_SystemReset).
+ * @brief program the NVM fuses to enable a 1024-byte EEPROM region, then reset
+ * @return does not return — triggers NVIC_SystemReset()
  */
 int eeprom_fuses_set(void)
 {
-  //Set the the NVM
   struct nvm_config config_nvm;
   nvm_get_config_defaults(&config_nvm);
   nvm_set_config(&config_nvm);
@@ -124,65 +115,49 @@ int eeprom_fuses_set(void)
   uint32_t temp;
   uint32_t data[2];
 
-  /* Wait for NVM command to complete */
   while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY));
 
-  /* Read the fuse settings in the user row, 64 bit */
+  // read existing 64-bit user-row fuse word
   data[0] = *((uint32_t *)NVMCTRL_AUX0_ADDRESS);
   data[1] = *(((uint32_t *)NVMCTRL_AUX0_ADDRESS) + 1);
 
-  //Configure the fuse bits to enable EEPROM 1024bytes - minimal size for the ASF eeprom library to use.
-  //Bits 4-6 specify eeprom size.
-  //Clear bits 4-6.
+  // EEPROM size lives in bits 4-6, clear then set 0b100 = 1024 bytes / 4 rows
   data[0] &= ~0x00000070;
-  //Eeprom to 1024 bytes / 4 rows (EEPROM bits 0x04)
   data[0] |=  0x00000040;
 
-  //Writeback sequence from https://microchip.my.site.com/s/article/SAMD20-SAMD21-Programming-the-fuses-from-application-code
-  /* Disable Cache */
+  // writeback sequence per Microchip KB:
+  // https://microchip.my.site.com/s/article/SAMD20-SAMD21-Programming-the-fuses-from-application-code
+
+  // disable cache during the operation
   temp = NVMCTRL->CTRLB.reg;
   NVMCTRL->CTRLB.reg = temp | NVMCTRL_CTRLB_CACHEDIS;
 
-  /* Clear error flags */
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
-
-  /* Set address, command will be issued elsewhere */
   NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
 
-  /* Erase the user page */
+  // erase the user page
   NVMCTRL->CTRLA.reg = NVM_COMMAND_ERASE_AUX_ROW | NVMCTRL_CTRLA_CMDEX_KEY;
-
-  /* Wait for NVM command to complete */
   while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY));
 
-  /* Clear error flags */
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
-
-  /* Set address, command will be issued elsewhere */
   NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
 
-  /* Erase the page buffer before buffering new data */
+  // clear the page buffer before staging new data
   NVMCTRL->CTRLA.reg = NVM_COMMAND_PAGE_BUFFER_CLEAR | NVMCTRL_CTRLA_CMDEX_KEY;
-
-  /* Wait for NVM command to complete */
   while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY));
 
-  /* Clear error flags */
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
-
-  /* Set address, command will be issued elsewhere */
   NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
 
-  // Write back the updated fuse bits.
+  // stage updated fuse bits
   *((uint32_t *)NVMCTRL_AUX0_ADDRESS) = data[0];
   *(((uint32_t *)NVMCTRL_AUX0_ADDRESS) + 1) = data[1];
 
-  /* Write the user page */
+  // commit the user-row write
   NVMCTRL->CTRLA.reg = NVM_COMMAND_WRITE_AUX_ROW | NVMCTRL_CTRLA_CMDEX_KEY;
 
-  /* Restore the settings */
+  // restore cache config
   NVMCTRL->CTRLB.reg = temp;
 
-  //Reset the MCU
   NVIC_SystemReset();
 }

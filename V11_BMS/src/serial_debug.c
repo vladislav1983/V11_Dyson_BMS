@@ -61,18 +61,13 @@ extern volatile struct eeprom_data eeprom_data;
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 
-/**
- * @brief Initialise the debug UART on SERCOM0 at 115200 baud.
- *
- * Configures PA10/PA11 as TX/RX and resets the transmit queue.
- */
+/** @brief bring up the debug UART on SERCOM0 (PA10 RX, PA11 TX, 115200 8N1) */
 void serial_debug_init()
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
   struct usart_config config_usart;
   usart_get_config_defaults(&config_usart);
 
-  //Load the necessary settings into the config struct.
   config_usart.baudrate    = 115200ul;
   config_usart.mux_setting = USART_RX_3_TX_2_XCK_3 ;
   config_usart.parity      = USART_PARITY_NONE;
@@ -81,22 +76,16 @@ void serial_debug_init()
   config_usart.pinmux_pad2 = PINMUX_PA10C_SERCOM0_PAD2;
   config_usart.pinmux_pad3 = PINMUX_PA11C_SERCOM0_PAD3;
 
-  //Init the UART
   while (usart_init(&debug_usart,SERCOM0, &config_usart) != STATUS_OK) { }
-  //Enable
   usart_enable(&debug_usart);
-    queue_head = 0;  // write index
-    queue_tail = 0;  // read index
+    queue_head = 0;
+    queue_tail = 0;
 #endif
 }
 
 /**
- * @brief Queue a null-terminated string for debug output.
- *
- * Characters are appended to a ring buffer.  If the buffer is full
- * the remaining characters are silently dropped.
- *
- * @param msg  Null-terminated string to enqueue.
+ * @brief enqueue a string for debug output, drops the tail on overflow
+ * @param msg  null-terminated string
  */
 void serial_debug_send_message(const char *msg)
 {
@@ -106,7 +95,7 @@ void serial_debug_send_message(const char *msg)
     uint16_t next_head = (queue_head + 1) % DEBUG_QUEUE_SIZE;
     if (next_head == queue_tail)
     {
-      break;  // queue full, drop remaining characters
+      break;                              // queue full
     }
     debug_queue[queue_head] = *msg++;
     queue_head = next_head;
@@ -114,36 +103,24 @@ void serial_debug_send_message(const char *msg)
 #endif
 }
 
-/**
- * @brief Transmit one byte from the debug queue.
- *
- * Call repeatedly from the main loop to drain the queue without
- * blocking other tasks.
- */
+/** @brief drain one byte from the queue, call repeatedly from the main loop */
 void serial_debug_process(void)
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
   if (queue_tail != queue_head)
   {
     SercomUsart *const hw = &(debug_usart.hw->USART);
-    
-    /* Check if USART is ready for new data */
-    if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_DRE) 
+
+    if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_DRE)
     {
-      /* Write data to USART module */
       hw->DATA.reg = (uint8_t)debug_queue[queue_tail];
-      /* Update read index */
       queue_tail   = (queue_tail + 1) % DEBUG_QUEUE_SIZE;
     }
   }
 #endif
 }
 
-/**
- * @brief Queue individual cell voltages and the pack voltage.
- *
- * Output format: "V: <c0> <c1> … <c6> P: <pack>\r\n"
- */
+/** @brief print "V: <c0> ... <c6> P: <pack>\r\n" */
 void serial_debug_send_cell_voltages(void)
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)
@@ -163,11 +140,7 @@ void serial_debug_send_cell_voltages(void)
 #endif
 }
 
-/**
- * @brief Queue the current pack charge level in mAh.
- *
- * Output format: "C: <mAh> mAh\r\n"
- */
+/** @brief print "C: <mAh> mAh\r\n" */
 void serial_debug_send_pack_capacity(void)
 {
 #if defined(SERIAL_DEBUG) || defined(PROT_DEBUG_PRINT)

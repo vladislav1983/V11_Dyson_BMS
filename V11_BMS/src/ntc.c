@@ -38,8 +38,7 @@
     DEFINITION OF LOCAL CONSTANTS
 -----------------------------------------------------------------------------*/
 /**
- * NTC lookup table with 129 interpolation points.
- * Unit: 0.1 degC
+ * @brief NTC lookup table, 129 points, unit 0.1 °C
  */
 int16_t NTC_table[129] = {
   1956, 1607, 1258, 1078, 958, 870, 800, 743,
@@ -69,14 +68,10 @@ int16_t NTC_table[129] = {
 -----------------------------------------------------------------------------*/
 
 /**
- * @brief Convert ADC reading to temperature using NTC lookup table.
- *
- * Interpolates between two adjacent table points. ADC value is normalized
- * from Vref = 3.3V/1.48 to 3.3V range before lookup.
- * Error in range -45 to +80 degC is 0.213 degC.
- *
- * @param adc_value  Raw ADC conversion result.
- * @return           Temperature in 0.1 degC units.
+ * @brief ADC reading to temperature via the NTC table, with linear interpolation,
+ *        max error ±0.213 °C over -45..+80 °C
+ * @param adc_value  raw ADC sample
+ * @return           temperature in 0.1 °C
  */
 int16_t NTC_ADC2Temperature(uint16_t adc_value)
 {
@@ -84,16 +79,15 @@ int16_t NTC_ADC2Temperature(uint16_t adc_value)
   uint32_t adc_value_norm_u32;
   uint16_t adc_value_norm_u16;
 
-  // normalize ADC with Vref = (3.3V / 1.48) to 3.3V
-  // normalized value should be LSB / 1.48
+  // renormalise from Vref = 3.3 V / 1.48 to a 3.3 V range (i.e. divide LSB by 1.48)
   adc_value_norm_u32 = (uint32_t)adc_value * (uint16_t)(32768.0 / 1.48);
   adc_value_norm_u16 = (uint16_t)(adc_value_norm_u32 >> 15);
 
-  /* Estimate the interpolating point before and after the ADC value. */
+  // bracketing table entries
   p1 = NTC_table[ (adc_value_norm_u16 >> 5)  ];
   p2 = NTC_table[ (adc_value_norm_u16 >> 5)+1];
 
-  /* Interpolate between both points. */
+  // linear interpolation
   return p1 - ( (p1-p2) * (adc_value_norm_u16 & 0x001F) ) / 32;
 };
 

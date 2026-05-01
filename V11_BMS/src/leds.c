@@ -27,7 +27,7 @@
 /*-----------------------------------------------------------------------------
     DECLARATION OF LOCAL MACROS/#DEFINES
 -----------------------------------------------------------------------------*/
-//speed of LED sequence
+// LED sequence step length, ms
 #define LED_SEQ_TIME          25
 #define TIMRER_FREQ_HZ        (8000000ul)
 #define PWM_FREQ_HZ           (200ul)
@@ -66,12 +66,7 @@ static const leds_cfg_t leds_cfg[] =
     DEFINITION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
 
-/**
- * @brief Initialise LED PWM timers.
- *
- * Configures one TC instance per LED in 16-bit normal PWM mode
- * with duty initially set to 0 (off).
- */
+/** @brief bring up one TC per LED in 16-bit normal PWM, duty 0 */
  void leds_init(void)
  {
   struct tc_config config_tc;
@@ -93,11 +88,7 @@ static const leds_cfg_t leds_cfg[] =
   }
 }
 
-/**
- * @brief Play a smooth fade-in / fade-out LED sequence.
- *
- * Both LEDs ramp up then down over 400 steps with 1 ms spacing.
- */
+/** @brief smooth fade-in/fade-out animation across both LEDs (400 ms total) */
 void leds_sequence(void)
 {
   uint8_t duty;
@@ -116,9 +107,7 @@ void leds_sequence(void)
   }
 }
 
-/**
- * @brief Turn off all LEDs (duty = 0%).
- */
+/** @brief turn all LEDs off */
 void leds_off(void)
 {
   const uint32_t cc_0_ppt = 0;
@@ -129,9 +118,7 @@ void leds_off(void)
   }
 }
 
-/**
- * @brief Turn on all LEDs at full brightness (duty = 100%).
- */
+/** @brief turn all LEDs on at full brightness */
 void leds_on(void)
 {
   const uint32_t cc_100_ppt = (CAPTURE_VALUE);
@@ -143,11 +130,8 @@ void leds_on(void)
 }
 
 /**
- * @brief Blink all LEDs once for a given duration.
- *
- * LEDs are on for the first half and off for the second half.
- *
- * @param ms  Total blink duration in milliseconds.
+ * @brief blink all LEDs once, on for ms/2, off for ms/2
+ * @param ms  total blink duration, ms
  */
 void leds_blink_leds(uint32_t ms)
 {
@@ -170,10 +154,9 @@ void leds_blink_leds(uint32_t ms)
 }
 
 /**
- * @brief Blink a single LED once for a given duration.
- *
- * @param led  LED index.
- * @param ms   Total blink duration in milliseconds.
+ * @brief blink a single LED once
+ * @param led  LED index
+ * @param ms   total blink duration, ms
  */
 void leds_blink_led(leds_t led, uint32_t ms)
 {
@@ -190,11 +173,10 @@ void leds_blink_led(leds_t led, uint32_t ms)
 }
 
 /**
- * @brief Blink a LED (or all LEDs) a specified number of times.
- *
- * @param led  LED index, or LEDS_NUM to blink all LEDs.
- * @param num  Number of blinks.
- * @param ms   Duration per blink in milliseconds.
+ * @brief blink one LED, or all LEDs, N times
+ * @param led  LED index, or LEDS_NUM for all
+ * @param num  blink count
+ * @param ms   duration per blink, ms
  */
 void leds_blink_leds_num(leds_t led, uint32_t num, uint32_t ms)
 {
@@ -217,10 +199,9 @@ void leds_blink_leds_num(leds_t led, uint32_t num, uint32_t ms)
 }
 
 /**
- * @brief Set the PWM duty cycle of a single LED.
- *
- * @param led      LED index.
- * @param duty_ppt Duty cycle in percent (0–100).
+ * @brief set a single LED's PWM duty
+ * @param led      LED index
+ * @param duty_ppt duty cycle, 0–100 %
  */
 void leds_set_led_duty(leds_t led, uint8_t duty_ppt)
 {
