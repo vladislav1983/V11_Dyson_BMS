@@ -27,7 +27,9 @@
 #define MODE_BUTTON_PULLUP_ENABLE_PIN       PIN_PA18
 #define PRECHARGE_PIN                       PIN_PA24
 
+#define PACK_CELL_COUNT                     7u
 #define PACK_MAX_CAPACITY_MAH               3600
+#define PACK_CAPACITY_UPPER_BOUND_UAH       (PACK_MAX_CAPACITY_MAH * 1200ul)
 #define CELL_LOWEST_DISCHARGE_VOLTAGE       2500    // mV, below this no discharge
 #define CELL_LOWEST_CHARGE_VOLTAGE          2000    // mV, below this no charge
 #define CELL_FULL_CHARGE_VOLTAGE            4170    // mV, stock firmware target
@@ -37,17 +39,10 @@
 #define CELL_UNDERVOLTAGE_TRIP              2450    // BQ7693 UV trip, valid range 1700-3000 mV
 
 // cell imbalance
-// latches BMS_ERR_CELL_IMBALANCE in EEPROM and blocks charge and discharge
-// until the user runs the 20-press factory reset, two complementary checks
-// both trip at CELL_IMBALANCE_FAULT_MV:
-//   - charging: any cell >= CELL_IMBALANCE_NEAR_FULL_MV, top of charge,
-//     voltages are stable on the taper, single-shot is enough
-//   - idle: min cell >= CELL_IMBALANCE_IDLE_MIN_MV, above the SoC knee in
-//     the flat OCV region, debounced over CELL_IMBALANCE_IDLE_DEBOUNCE polls
-#define CELL_IMBALANCE_FAULT_MV             200
-#define CELL_IMBALANCE_NEAR_FULL_MV         4000
-#define CELL_IMBALANCE_IDLE_MIN_MV          3500
-#define CELL_IMBALANCE_IDLE_DEBOUNCE        30
+#define CELL_IMBALANCE_FAULT_MV             500
+#define CELL_IMBALANCE_DEBOUNCE             30       // debounce for 1.5 s at the 50 ms safety polling interval
+
+#define FAULT_SLEEP_TIMEOUT_MS              120000   // sleep after fault display timeout
 
 // 18650 temperature limits (Molicel datasheet)
 #define MAX_PACK_TEMPERATURE                60       // °C, above this no charge or discharge
@@ -65,6 +60,6 @@
 #define PROT_DEBUG_PRINT                    1
 
 // trigger behaviour: 0 = momentary (hold to run), 1 = toggle (press to run/stop, hold ≥ 1 s to stop)
-#define TRIGGER_TOGGLE_MODE                 1
+#define TRIGGER_TOGGLE_MODE                 0
 
 #endif /* CONFIG_H_ */

@@ -4,8 +4,8 @@ project(samd20_firmware C ASM)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type: Debug or Release" FORCE)
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type: Debug or Release" FORCE)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -69,7 +69,7 @@ add_compile_options(${COMMON_C_FLAGS})
 
 # Debug:   -Og, debug symbols
 # Release: -Os, no debug symbols
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-Og -g3)
 else()
     add_compile_options(-Os)

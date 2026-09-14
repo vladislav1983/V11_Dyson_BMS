@@ -8,52 +8,23 @@
 
 
 #include "bq7693.h"
+#include <string.h>
 
-void bq7693_i2c_init(void);
+#define BQ7693_MAX_READ_LENGTH  16u
 
-// "internal" function primitives
-int bq7693_read_block(uint8_t start_addr, size_t len, uint8_t* buf);
-int bq7693_write_block(uint8_t start_addr, size_t len, uint8_t *buf);
-uint8_t bq7693_calc_checksum(uint8_t inCrc, uint8_t data);
+static bool bq7693_i2c_init(void);
+static uint8_t bq7693_calc_checksum(uint8_t inCrc, uint8_t data);
 
-uint16_t bq7693_cell_voltages[7];
+static uint16_t bq7693_cell_voltages[PACK_CELL_COUNT];
 
-volatile int bq7693_adc_gain = 0;   // in uV/LSB
-volatile int8_t bq7693_adc_offset = 0; //in mV
+static int bq7693_adc_gain = 0;       // in uV/LSB
+static int8_t bq7693_adc_offset = 0;  // in mV
 
-// maps for settings in chip protection registers
-
-const int SCD_delay_setting [4] =
-{ 70, 100, 200, 400 };
-
-const int SCD_threshold_setting [8] =
-{ 44, 67, 89, 111, 133, 155, 178, 200 }; // mV
-
-const int OCD_delay_setting [8] =
-{ 8, 20, 40, 80, 160, 320, 640, 1280 }; // ms
-const int OCD_threshold_setting [16] =
-{ 17, 22, 28, 33, 39, 44, 50, 56, 61, 67, 72, 78, 83, 89, 94, 100 };  // mV
-
-const uint8_t UV_delay_setting [4] = { 1, 4, 8, 16 }; // s
-const uint8_t OV_delay_setting [4] = { 1, 2, 4, 8 }; // s
-
-struct i2c_master_module i2c_master_instance;
-
-/**
- * @brief set a pin's peripheral mux via direct register access
- * @param pinmux  pin multiplexer configuration value
- */
-static inline void pin_set_peripheral_function(uint32_t pinmux)
-{
-  uint8_t port = (uint8_t)((pinmux >> 16)/32);
-  PORT->Group[port].PINCFG[((pinmux >> 16) - (port*32))].bit.PMUXEN = 1;
-  PORT->Group[port].PMUX[((pinmux >> 16) - (port*32))/2].reg &= ~(0xF << (4 * ((pinmux >>16) & 0x01u)));
-  PORT->Group[port].PMUX[((pinmux >> 16) - (port*32))/2].reg |= (uint8_t)((pinmux & 0x0000FFFF) << (4 * ((pinmux >> 16) & 0x01u)));
-}
+static struct i2c_master_module i2c_master_instance;
 
 /** @brief bring up I²C master on SERCOM1 for BQ7693 traffic */
-void bq7693_i2c_init()
- {
+static bool bq7693_i2c_init(void)
+{
   struct i2c_master_config config_i2c_master;
 
   i2c_master_get_config_defaults(&config_i2c_master);
@@ -64,48 +35,51 @@ void bq7693_i2c_init()
   config_i2c_master.pinmux_pad1               = PINMUX_PA17C_SERCOM1_PAD1;
   config_i2c_master.scl_low_timeout           = true;
 
-  i2c_master_init(&i2c_master_instance, SERCOM1, &config_i2c_master);
+  if (i2c_master_init(&i2c_master_instance, SERCOM1, &config_i2c_master) != STATUS_OK)
+    return false;
+
   i2c_master_enable(&i2c_master_instance);
+  return true;
 }
 
 /** @brief configure the BQ7693: ADC calibration, protection, OV/UV trips, coulomb counter */
-void bq7693_init()
+bool bq7693_init(void)
 {
-  bq7693_i2c_init();
-  bq7693_write_register(SYS_CTRL2, 0x00); // both FETs off — pack safe before configuring
+  uint8_t scratch1 = 0;
+  uint8_t scratch2 = 0;
 
-  // read ADC offset and gain, in two's complement
-  uint8_t scratch1, scratch2;
-  bq7693_read_register(ADCOFFSET, 1, &scratch1);
+  if (!bq7693_i2c_init() || !bq7693_write_register(SYS_CTRL2, 0x00))
+    return false;
+
+  if (!bq7693_read_register(ADCOFFSET, 1, &scratch1))
+    return false;
+
   bq7693_adc_offset = (int8_t)scratch1;
-  bq7693_read_register(ADCGAIN1, 1, &scratch1);
-  bq7693_read_register(ADCGAIN2, 1, &scratch2);
-  bq7693_adc_gain = 365 + ((( scratch1 & 0x0C) << 1) | (( scratch2 & 0xE0) >> 5)); // µV/LSB
 
-  bq7693_write_register(PROTECT1, 0x82);
-  bq7693_write_register(PROTECT2, 0x04);
+  if (!bq7693_read_register(ADCGAIN1, 1, &scratch1) || !bq7693_read_register(ADCGAIN2, 1, &scratch2))
+    return false;
+  bq7693_adc_gain = 365 + (((scratch1 & 0x0C) << 1) | ((scratch2 & 0xE0) >> 5)); // µV/LSB
 
-  // OV/UV delays = 1 s
-  bq7693_write_register(PROTECT3, 0x00);
+  if (!bq7693_write_register(PROTECT1, 0x82) || !bq7693_write_register(PROTECT2, 0x04) || !bq7693_write_register(PROTECT3, 0x00))
+    return false;
 
-  // translate the configured trip voltages into BQ7693 raw units
-  scratch1 = (((((long)CELL_OVERVOLTAGE_TRIP - bq7693_adc_offset)*1000)/ bq7693_adc_gain) >> 4) & 0xFF;
-  bq7693_write_register(OV_TRIP, scratch1);
+  scratch1 = (((((long)CELL_OVERVOLTAGE_TRIP - bq7693_adc_offset) * 1000) / bq7693_adc_gain) >> 4) & 0xFF;
+
+  if (!bq7693_write_register(OV_TRIP, scratch1))
+    return false;
 
   scratch1 = (((((long)CELL_UNDERVOLTAGE_TRIP - bq7693_adc_offset) * 1000) / bq7693_adc_gain) >> 4) & 0xFF;
-  bq7693_write_register(UV_TRIP, scratch1);
 
-  bq7693_write_register(CELLBAL1, 0x00);  // cell balancing off
-  bq7693_write_register(CELLBAL2, 0x00);
+  if (!bq7693_write_register(UV_TRIP, scratch1))
+    return false;
 
-  bq7693_write_register(CC_CFG, 0x19);    // datasheet-mandated value
-  bq7693_write_register(SYS_CTRL2, 0x40); // CC_EN: continuous coulomb counter
+  if (!bq7693_write_register(CELLBAL1, 0x00) || !bq7693_write_register(CELLBAL2, 0x00))
+    return false;
 
-  bq7693_write_register(SYS_CTRL1, 0x10); // ADC_EN
+  if (!bq7693_write_register(CC_CFG, 0x19) || !bq7693_write_register(SYS_CTRL2, 0x40) || !bq7693_write_register(SYS_CTRL1, 0x10))
+    return false;
 
-  // clear any latched SYS_STAT bits by writing them back
-  bq7693_read_register(SYS_STAT, 1, &scratch1);
-  bq7693_write_register(SYS_STAT, scratch1);
+  return bq7693_read_register(SYS_STAT, 1, &scratch1) && bq7693_write_register(SYS_STAT, scratch1);
 }
 
 /**
@@ -116,44 +90,51 @@ void bq7693_init()
  * @return      true on success
  */
 bool bq7693_read_register(uint8_t addr, size_t len, uint8_t *buf)
- {
-  // mask EIC during the I²C transaction so the BQ7693 ALERT ISR can't
-  // reentrantly read the coulomb counter mid-transfer
-  system_interrupt_disable(SYSTEM_INTERRUPT_MODULE_EIC);
-
+{
+  uint8_t raw[BQ7693_MAX_READ_LENGTH * 2u];
   uint16_t timeout = 0;
-  bool result = true;
+  bool result = false;
+  bool eic_was_enabled = false;
 
-  // address phase
-  struct i2c_master_packet packet =
+  if (buf != NULL && len > 0 && len <= BQ7693_MAX_READ_LENGTH)
   {
-    .address = BQ7693_ADDR,
-    .data_length = 1,
-    .data = &addr
-  };
+    struct i2c_master_packet packet = { .address = BQ7693_ADDR, .data_length = 1, .data = &addr };
+    eic_was_enabled = system_interrupt_is_enabled(SYSTEM_INTERRUPT_MODULE_EIC);
 
-  while (i2c_master_write_packet_wait(&i2c_master_instance, &packet) != STATUS_OK)
-  {
-    if (timeout++ >= BQ7693_TIMEOUT)
+    if (eic_was_enabled)
+      system_interrupt_disable(SYSTEM_INTERRUPT_MODULE_EIC);
+
+    while (i2c_master_write_packet_wait(&i2c_master_instance, &packet) != STATUS_OK && timeout++ < BQ7693_TIMEOUT);
+    result = (timeout <= BQ7693_TIMEOUT);
+
+    if (result)
     {
-      break;
+      packet.data_length = len * 2u;
+      packet.data = raw;
+      timeout = 0;
+
+      while (i2c_master_read_packet_wait(&i2c_master_instance, &packet) != STATUS_OK && timeout++ < BQ7693_TIMEOUT);
+      result = (timeout <= BQ7693_TIMEOUT);
+    }
+
+    for (size_t i = 0; result && i < len; ++i)
+    {
+      uint8_t crc = 0;
+
+      if (i == 0)
+        crc = bq7693_calc_checksum(crc, (BQ7693_ADDR << 1) | 1u);
+
+      crc = bq7693_calc_checksum(crc, raw[i * 2u]);
+      result = (crc == raw[i * 2u + 1u]);
+
+      if (result)
+        buf[i] = raw[i * 2u];
     }
   }
-  // data phase
-  packet.data_length = len;
-  packet.data = buf;
-  timeout = 0;
 
-  while (i2c_master_read_packet_wait(&i2c_master_instance, &packet) != STATUS_OK)
-  {
-    if (timeout++ >= BQ7693_TIMEOUT)
-    {
-      result = false;
-      break;
-    }
-  }
+  if (eic_was_enabled)
+    system_interrupt_enable(SYSTEM_INTERRUPT_MODULE_EIC);
 
-  system_interrupt_enable(SYSTEM_INTERRUPT_MODULE_EIC);
   return result;
 }
 
@@ -165,18 +146,19 @@ bool bq7693_read_register(uint8_t addr, size_t len, uint8_t *buf)
  */
 bool bq7693_write_register(uint8_t addr, uint8_t value)
 {
-  // mask EIC during the I²C transaction (see bq7693_read_register)
-  system_interrupt_disable(SYSTEM_INTERRUPT_MODULE_EIC);
-
   uint16_t timeout = 0;
   bool result = true;
+  bool eic_was_enabled = system_interrupt_is_enabled(SYSTEM_INTERRUPT_MODULE_EIC);
+
+  if (eic_was_enabled)
+    system_interrupt_disable(SYSTEM_INTERRUPT_MODULE_EIC);
 
   uint8_t buf[3];
   buf[0] = addr;
   buf[1] = value;
 
   // CRC over slave address + R/W bit, then register address, then data
-  uint8_t crc = bq7693_calc_checksum(0x00, (BQ7693_ADDR <<1) | 0);
+  uint8_t crc = bq7693_calc_checksum(0x00, (BQ7693_ADDR << 1) | 0);
   crc = bq7693_calc_checksum(crc, buf[0]);
   crc = bq7693_calc_checksum(crc, buf[1]);
   buf[2] = crc;
@@ -196,7 +178,10 @@ bool bq7693_write_register(uint8_t addr, uint8_t value)
       break;
     }
   }
-  system_interrupt_enable(SYSTEM_INTERRUPT_MODULE_EIC);
+
+  if (eic_was_enabled)
+    system_interrupt_enable(SYSTEM_INTERRUPT_MODULE_EIC);
+
   return result;
 }
 
@@ -206,20 +191,26 @@ bool bq7693_write_register(uint8_t addr, uint8_t value)
  * @param inData  next byte
  * @return        updated CRC
  */
-uint8_t bq7693_calc_checksum(uint8_t inCrc, uint8_t inData)
+static uint8_t bq7693_calc_checksum(uint8_t inCrc, uint8_t inData)
 {
   uint8_t i;
   uint8_t data;
+
   data = inCrc ^ inData;
-  for ( i = 0; i < 8; i++ )
+
+  for (i = 0; i < 8; i++)
   {
-    if (( data & 0x80 ) != 0 )
+    if ((data & 0x80) != 0)
     {
       data <<= 1;
       data ^= 0x07;
     }
-    else data <<= 1;
+    else
+    {
+      data <<= 1;
+    }
   }
+
   return data;
 }
 
@@ -229,52 +220,74 @@ uint8_t bq7693_calc_checksum(uint8_t inCrc, uint8_t inData)
 #define SYS_CTRL2_CHG_ON  0x01
 
 /** @brief clear SYS_STAT errors and turn the charge FET on */
-void bq7693_enable_charge(void)
+bool bq7693_enable_charge(void)
 {
-  uint8_t scratch;
-  bq7693_read_register(SYS_STAT, 1, &scratch);
-  bq7693_write_register(SYS_STAT, scratch);    // clear latched bits
+  uint8_t scratch = 0;
+  uint8_t ctrl2 = 0;
 
-  uint8_t ctrl2;
-  bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
-  bq7693_write_register(SYS_CTRL2, ctrl2 | SYS_CTRL2_CC_EN | SYS_CTRL2_CHG_ON);
+  if (!bq7693_read_register(SYS_STAT, 1, &scratch) || !bq7693_write_register(SYS_STAT, scratch & STAT_FLAGS))
+    return false;
+
+  if (!bq7693_read_register(SYS_CTRL2, 1, &ctrl2))
+    return false;
+
+  return bq7693_write_register(SYS_CTRL2, ctrl2 | SYS_CTRL2_CC_EN | SYS_CTRL2_CHG_ON);
 }
 
 /** @brief turn the charge FET off, discharge FET state preserved */
-void bq7693_disable_charge(void)
+bool bq7693_disable_charge(void)
 {
-  uint8_t ctrl2;
-  bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
-  bq7693_write_register(SYS_CTRL2, ctrl2 & ~SYS_CTRL2_CHG_ON);
+  uint8_t ctrl2 = 0;
+
+  if (!bq7693_read_register(SYS_CTRL2, 1, &ctrl2))
+    return false;
+
+  return bq7693_write_register(SYS_CTRL2, ctrl2 & ~SYS_CTRL2_CHG_ON);
 }
 
 /** @brief configure protection, clear errors and turn the discharge FET on */
-void bq7693_enable_discharge(void)
+bool bq7693_enable_discharge(void)
 {
-  bq7693_write_register(SYS_CTRL1, 0x10);  // ADC_EN=1
+  uint8_t scratch = 0;
+  uint8_t ctrl2 = 0;
+  bool result = bq7693_write_register(SYS_CTRL1, 0x10);
+  bool protect2_restored;
+  bool protect1_restored;
 
-  bq7693_write_register(PROTECT1, 0x9F);
-  bq7693_write_register(PROTECT2, 0x04);
+  if (result)
+    result = bq7693_write_register(PROTECT1, 0x9F);
 
-  uint8_t scratch;
-  bq7693_read_register(SYS_STAT, 1, &scratch);
-  bq7693_write_register(SYS_STAT, scratch);    // clear latched bits
+  if (result)
+    result = bq7693_write_register(PROTECT2, 0x04);
 
-  // set DSG_ON, preserve CHG_ON so charging is unaffected
-  uint8_t ctrl2;
-  bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
-  bq7693_write_register(SYS_CTRL2, ctrl2 | SYS_CTRL2_CC_EN | SYS_CTRL2_DSG_ON);
+  if (result)
+    result = bq7693_read_register(SYS_STAT, 1, &scratch);
 
-  bq7693_write_register(PROTECT2, 0x04);
-  bq7693_write_register(PROTECT1, 0x82);
+  if (result)
+    result = bq7693_write_register(SYS_STAT, scratch & STAT_FLAGS);
+
+  if (result)
+    result = bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
+
+  if (result)
+    result = bq7693_write_register(SYS_CTRL2, ctrl2 | SYS_CTRL2_CC_EN | SYS_CTRL2_DSG_ON);
+
+  protect2_restored = bq7693_write_register(PROTECT2, 0x04);
+  protect1_restored = bq7693_write_register(PROTECT1, 0x82);
+  result = result && protect2_restored && protect1_restored;
+
+  return result;
 }
 
 /** @brief turn the discharge FET off, charge FET state preserved */
-void bq7693_disable_discharge(void)
+bool bq7693_disable_discharge(void)
 {
-  uint8_t ctrl2;
-  bq7693_read_register(SYS_CTRL2, 1, &ctrl2);
-  bq7693_write_register(SYS_CTRL2, ctrl2 & ~SYS_CTRL2_DSG_ON);
+  uint8_t ctrl2 = 0;
+
+  if (!bq7693_read_register(SYS_CTRL2, 1, &ctrl2))
+    return false;
+
+  return bq7693_write_register(SYS_CTRL2, ctrl2 & ~SYS_CTRL2_DSG_ON);
 }
 
 /**
@@ -283,56 +296,64 @@ void bq7693_disable_discharge(void)
  */
 uint16_t *bq7693_get_cell_voltages(void)
 {
-  uint8_t scratch[3];
-  uint16_t tempval;
+  uint8_t scratch[2];
+  uint16_t values[PACK_CELL_COUNT];
   // V11/V15 wiring: only these BQ7693 channels are populated
-  int cellsToRead[] = { 0,1,2,3,5,6,9};
+  static const uint8_t cells_to_read[PACK_CELL_COUNT] = { 0, 1, 2, 3, 5, 6, 9 };
 
-  for (int i=0; i< 7; ++i)
+  for (uint8_t i = 0; i < PACK_CELL_COUNT; ++i)
   {
-    // CRC mode returns 3 bytes per read: HI, CRC, LO, CRC byte is ignored
-    bq7693_read_register((VC1_HI_BYTE + 2*cellsToRead[i]), 3, scratch);
-    tempval = ((scratch[0] & 0x3F) <<8) | scratch[2];
-    bq7693_cell_voltages[i] = tempval * bq7693_adc_gain/1000 + bq7693_adc_offset;
+    if (!bq7693_read_register(VC1_HI_BYTE + 2u * cells_to_read[i], 2, scratch))
+      return NULL;
+
+    uint16_t raw = ((uint16_t)(scratch[0] & 0x3F) << 8) | scratch[1];
+    int32_t calibrated = (int32_t)raw * bq7693_adc_gain / 1000 + bq7693_adc_offset;
+
+    if (calibrated < 0 || calibrated > 6000)
+      return NULL;
+    values[i] = (uint16_t)calibrated;
   }
+
+  memcpy(bq7693_cell_voltages, values, sizeof(values));
 
   return bq7693_cell_voltages;
 }
 
 /**
- * @brief read pack voltage from the BAT register
- * @return pack voltage in mV
+ * @brief read and sum all seven calibrated cell voltages
+ * @return pack voltage in mV, or -1 when a cell snapshot cannot be read
  */
 int bq7693_get_pack_voltage(void)
 {
-  uint8_t scratch[3];
-  uint16_t tempval;
-  bq7693_read_register(BAT_HI_BYTE, 3, scratch);
-  tempval = scratch[0] <<8 | scratch[2];
-  int bq7693_pack_voltage = 4 * bq7693_adc_gain * tempval / 1000 + ( 7 * bq7693_adc_offset);
-  return bq7693_pack_voltage;
+  uint16_t *cell_voltages = bq7693_get_cell_voltages();
+  int32_t pack_mv = 0;
+
+  if (cell_voltages == NULL)
+    return -1;
+
+  for (uint8_t i = 0; i < PACK_CELL_COUNT; ++i)
+    pack_mv += cell_voltages[i];
+
+  return (pack_mv <= 60000) ? (int)pack_mv : -1;
 }
 
 /** @brief put the BQ7693 into SHIP (deep sleep) mode */
-void bq7693_enter_sleep_mode(void)
+bool bq7693_enter_sleep_mode(void)
 {
-  bq7693_write_register(SYS_CTRL1, 0x00);
-  bq7693_write_register(SYS_CTRL1, 0x01);
-  bq7693_write_register(SYS_CTRL1, 0x02);
+  return bq7693_write_register(SYS_CTRL1, 0x00) && bq7693_write_register(SYS_CTRL1, 0x01) && bq7693_write_register(SYS_CTRL1, 0x02);
 }
 
 /**
  * @brief read the raw coulomb-counter value
  * @return signed 16-bit CC reading
  */
-int16_t bq7693_read_cc(void)
+bool bq7693_read_cc(int16_t *value)
 {
-  int16_t tempCC;
+  uint8_t scratch[2];
 
-  uint8_t scratch[3];
-  bq7693_read_register(CC_HI_BYTE, 3, scratch);
-  tempCC =  ((scratch[0])<<8);
-  tempCC |= scratch[2];   // skip CRC byte
+  if (value == NULL || !bq7693_read_register(CC_HI_BYTE, 2, scratch))
+    return false;
 
-  return tempCC;
+  *value = (int16_t)(((uint16_t)scratch[0] << 8) | scratch[1]);
+  return true;
 }

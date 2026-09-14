@@ -35,14 +35,14 @@ typedef struct
 {
   const uint8_t gpio_pin;
   uint8_t deb_ticks;
-}dio_cfg_t;
+} dio_cfg_t;
 
 typedef struct
 {
   uint8_t  value_old;
   uint8_t  debounced_value;
   uint16_t debounce_counter;
-}dio_data_t;
+} dio_data_t;
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL VARIABLES
@@ -62,13 +62,14 @@ static sw_timer task_timer = 0;
 static const dio_cfg_t dio_cfg[DIO_NUM] =
 {
   [DIO_CHARGER_CONNECTED] = {.gpio_pin = CHARGER_CONNECTED_PIN, .deb_ticks = (50 / DIO_TASK_TICKS)},
-  [DIO_MODE_BUTTON      ] = {.gpio_pin = MODE_BUTTON_PIN,       .deb_ticks = (50 / DIO_TASK_TICKS)},
+  [DIO_MODE_BUTTON      ] = {.gpio_pin = MODE_BUTTON_PIN,       .deb_ticks = 0},
   [DIO_TRIGGER_PRESSED  ] = {.gpio_pin = TRIGGER_PRESSED_PIN,   .deb_ticks = (50 / DIO_TASK_TICKS)},
 };
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
 -----------------------------------------------------------------------------*/
+static bool dio_debounce(uint8_t value, uint8_t *value_old, uint8_t *debounced_value, uint16_t *debounce_counter, uint16_t debounce_counter_preset);
 
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL FUNCTIONS
@@ -99,10 +100,10 @@ void dio_init(void)
 void dio_mainloop(void)
 {
   bool in;
-  dio_data_t* d;
-  const dio_cfg_t* c;
+  dio_data_t *d;
+  const dio_cfg_t *c;
 
-  if(true == sw_timer_is_elapsed(&task_timer, DIO_TASK_TICKS))
+  if (true == sw_timer_is_elapsed(&task_timer, DIO_TASK_TICKS))
   {
     sw_timer_start(&task_timer);
 
@@ -111,7 +112,7 @@ void dio_mainloop(void)
       d = &dio_data[i];
       c = &dio_cfg[i];
       in = port_pin_get_input_level(c->gpio_pin);
-      dio_debounce(in, d->value_old, &(d->debounced_value), &(d->debounce_counter), c->deb_ticks);
+      dio_debounce(in, &d->value_old, &d->debounced_value, &d->debounce_counter, c->deb_ticks);
     }
   }
 }
@@ -125,7 +126,7 @@ bool dio_read(dio_type_t dio)
 {
   bool dio_level = false;
 
-  if(dio < DIO_NUM)
+  if ((uint32_t)dio < (uint32_t)DIO_NUM)
   {
     dio_level = dio_data[(uint32_t)dio].debounced_value;
   }
@@ -144,31 +145,38 @@ bool dio_read(dio_type_t dio)
  * @param debounce_counter_preset  ticks needed for a stable reading
  * @return true when settled, false while counting
  */
-bool dio_debounce(uint8_t value, uint8_t value_old, uint8_t *debounced_value, uint16_t *debounce_counter, uint16_t debounce_counter_preset)
+static bool dio_debounce(uint8_t value, uint8_t *value_old, uint8_t *debounced_value, uint16_t *debounce_counter, uint16_t debounce_counter_preset)
 {
   bool debounce_finished = false;
 
-  if ((*debounce_counter == 0) || (debounce_counter_preset == 0) || (debounced_value == NULL) || (debounce_counter == NULL))
+  if (value_old != NULL && debounced_value != NULL && debounce_counter != NULL)
   {
-    debounce_finished = true;
-    *debounce_counter = 0;
-  }
-  else
-  {
-    if (value != value_old)
+    if (debounce_counter_preset == 0)
     {
+      *value_old = value;
+      *debounced_value = value;
+      *debounce_counter = 0;
+      debounce_finished = true;
+    }
+    else if (value != *value_old)
+    {
+      *value_old = value;
       *debounce_counter = debounce_counter_preset;
+    }
+    else if (*debounce_counter > 0)
+    {
+      (*debounce_counter)--;
+
+      if (*debounce_counter == 0)
+      {
+        *debounced_value = value;
+        debounce_finished = true;
+      }
     }
     else
     {
-      *debounce_counter = *debounce_counter - 1;
+      debounce_finished = true;
     }
-  }
-
-  if (*debounce_counter == 0)
-  {
-    debounce_finished = true;
-    *debounced_value = value;                       // latest sample becomes the new debounced value
   }
 
   return debounce_finished;

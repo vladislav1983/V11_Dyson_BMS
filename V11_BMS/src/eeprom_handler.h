@@ -39,6 +39,6 @@ extern int eeprom_init(void);
 extern int eeprom_read(void);
 extern int eeprom_write(void);
 extern int eeprom_fuses_set(void);
-extern void eeprom_write_defaults(void);
+extern int eeprom_write_defaults(void);
 
 #endif /* EEPROM_H_ */

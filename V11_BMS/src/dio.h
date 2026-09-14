@@ -22,7 +22,7 @@ typedef enum
   DIO_MODE_BUTTON,
   DIO_TRIGGER_PRESSED,
   DIO_NUM
-}dio_type_t;
+} dio_type_t;
 
 /*-----------------------------------------------------------------------------
   DEFINITION OF GLOBAL MACROS/#DEFINES
@@ -42,7 +42,6 @@ typedef enum
 extern void dio_init(void);
 extern void dio_mainloop(void);
 extern bool dio_read(dio_type_t dio);
-extern bool dio_debounce(uint8_t value, uint8_t value_old, uint8_t *debounced_value, uint16_t *debounce_counter, uint16_t debounce_counter_preset);
 
 /*-----------------------------------------------------------------------------
   END OF MODULE DEFINITION FOR MULTIPLE INCLUSION

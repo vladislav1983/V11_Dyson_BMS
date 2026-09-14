@@ -40,7 +40,7 @@
 /**
  * @brief NTC lookup table, 129 points, unit 0.1 °C
  */
-int16_t NTC_table[129] = {
+static const int16_t NTC_table[129] = {
   1956, 1607, 1258, 1078, 958, 870, 800, 743,
   694, 652, 615, 582, 552, 525, 500, 477, 455,
   435, 416, 398, 381, 365, 350, 335, 321, 308,
@@ -75,21 +75,25 @@ int16_t NTC_table[129] = {
  */
 int16_t NTC_ADC2Temperature(uint16_t adc_value)
 {
-  int16_t p1,p2;
+  int16_t p1, p2;
   uint32_t adc_value_norm_u32;
   uint16_t adc_value_norm_u16;
+
+  if (adc_value > 0x0FFFu)
+    return NTC_INVALID_TEMPERATURE;
 
   // renormalise from Vref = 3.3 V / 1.48 to a 3.3 V range (i.e. divide LSB by 1.48)
   adc_value_norm_u32 = (uint32_t)adc_value * (uint16_t)(32768.0 / 1.48);
   adc_value_norm_u16 = (uint16_t)(adc_value_norm_u32 >> 15);
+  uint16_t index = adc_value_norm_u16 >> 5;
 
-  // bracketing table entries
-  p1 = NTC_table[ (adc_value_norm_u16 >> 5)  ];
-  p2 = NTC_table[ (adc_value_norm_u16 >> 5)+1];
+  if (index >= ((sizeof(NTC_table) / sizeof(NTC_table[0])) - 1u))
+    return NTC_INVALID_TEMPERATURE;
 
-  // linear interpolation
-  return p1 - ( (p1-p2) * (adc_value_norm_u16 & 0x001F) ) / 32;
-};
+  p1 = NTC_table[index];
+  p2 = NTC_table[index + 1u];
+  return p1 - ((p1 - p2) * (adc_value_norm_u16 & 0x001F)) / 32;
+}
 
 /*-----------------------------------------------------------------------------
     END OF MODULE

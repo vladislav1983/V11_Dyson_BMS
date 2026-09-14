@@ -13,18 +13,19 @@ volatile struct eeprom_data eeprom_data;
  * @brief reset EEPROM contents to factory defaults and commit,
  *        zeros the whole struct then sets the non-zero fields
  */
-void eeprom_write_defaults(void)
+int eeprom_write_defaults(void)
 {
   memset((void *)&eeprom_data, 0, sizeof(eeprom_data));
-  eeprom_data.total_pack_capacity  = (PACK_MAX_CAPACITY_MAH     * 1200ul);
-  eeprom_data.current_charge_level = ((PACK_MAX_CAPACITY_MAH/2) * 1000ul);
-  eeprom_write();
+  eeprom_data.total_pack_capacity  = (PACK_MAX_CAPACITY_MAH     * 1000ul);
+  eeprom_data.current_charge_level = ((PACK_MAX_CAPACITY_MAH / 2) * 1000ul);
+
+  return eeprom_write();
 }
 
 /**
  * @brief bring up the EEPROM emulator, programs fuses on first use and
  *        rewrites defaults on a CRC mismatch or invalid fields
- * @return ASF status from eeprom_emulator_init()
+ * @return zero on success, otherwise an EEPROM error status
  */
 int eeprom_init(void)
 {
@@ -35,36 +36,45 @@ int eeprom_init(void)
     // fuses are still 0x07, EEPROM is disabled, flash a few slow blinks so
     // the user knows we're doing something, then program the fuses (which
     // resets the MCU)
-    for (int i=0; i<4; ++i)
+    for (int i = 0; i < 4; ++i)
     {
       leds_blink_leds(2000);
     }
     eeprom_fuses_set();                    // does not return
+    return error_code;
   }
-  else if (error_code != STATUS_OK)
+
+  if (error_code != STATUS_OK)
   {
     // wipe and reformat
     eeprom_emulator_erase_memory();
     error_code = eeprom_emulator_init();
-    eeprom_write_defaults();
-  }
-  else
-  {
-    // emulator is happy, load and validate
-    if (eeprom_read() != 0)
-    {
-      eeprom_write_defaults();             // CRC mismatch
-    }
-    else if (eeprom_data.full_discharge_seen > 1 || eeprom_data.imbalance_locked > 1)
-    {
-      // a boolean byte outside {0,1} means uninitialised (erased flash = 0xFF)
-      // or written by a firmware whose struct layout didn't cover this byte,
-      // treat as corrupt and rewrite
-      eeprom_write_defaults();
-    }
+
+    if (error_code != STATUS_OK)
+      return error_code;
+
+    return eeprom_write_defaults();
   }
 
-  return error_code;
+  // emulator is happy, load and validate
+  if (eeprom_read() != 0)
+    return eeprom_write_defaults();
+
+  if (eeprom_data.total_pack_capacity <= 0 ||
+      eeprom_data.total_pack_capacity > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH ||
+      eeprom_data.current_charge_level < 0 ||
+      eeprom_data.current_charge_level > (int32_t)PACK_CAPACITY_UPPER_BOUND_UAH ||
+      (!eeprom_data.full_discharge_seen && eeprom_data.current_charge_level > eeprom_data.total_pack_capacity) ||
+      eeprom_data.full_discharge_seen > 1 ||
+      eeprom_data.imbalance_locked > 1)
+  {
+    // a boolean byte outside {0,1} means uninitialised (erased flash = 0xFF)
+    // or written by a firmware whose struct layout didn't cover this byte,
+    // treat as corrupt and rewrite
+    return eeprom_write_defaults();
+  }
+
+  return STATUS_OK;
 }
 
 /**
@@ -74,32 +84,30 @@ int eeprom_init(void)
 int eeprom_read(void)
 {
   uint8_t buffer[EEPROM_PAGE_SIZE];
-  eeprom_emulator_read_page(0, buffer);
-  memcpy((void*)&eeprom_data, buffer, sizeof(eeprom_data));
 
-  // CRC covers every byte before the crc32 field
-  uint32_t calc = calc_crc32((const uint8_t *)&eeprom_data,
-      sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
-  if (calc != eeprom_data.crc32) {
+  if (eeprom_emulator_read_page(0, buffer) != STATUS_OK)
     return -1;
-  }
-  return 0;
+
+  memcpy((void *)&eeprom_data, buffer, sizeof(eeprom_data));
+  uint32_t calc = calc_crc32((const uint8_t *)&eeprom_data, sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
+  return (calc == eeprom_data.crc32) ? 0 : -1;
 }
 
 /**
  * @brief compute CRC and write EEPROM page 0
- * @return always 0
+ * @return zero on success, -1 on write failure
  */
 int eeprom_write(void)
 {
-  eeprom_data.crc32 = calc_crc32((const uint8_t *)&eeprom_data,
-      sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
+  eeprom_data.crc32 = calc_crc32((const uint8_t *)&eeprom_data, sizeof(eeprom_data) - sizeof(eeprom_data.crc32));
 
-  uint8_t buffer[EEPROM_PAGE_SIZE];
-  memcpy(buffer, (const void*)&eeprom_data, sizeof(eeprom_data));
-  eeprom_emulator_write_page(0, buffer);
-  eeprom_emulator_commit_page_buffer();
-  return 0;
+  uint8_t buffer[EEPROM_PAGE_SIZE] = { 0 };
+  memcpy(buffer, (const void *)&eeprom_data, sizeof(eeprom_data));
+
+  if (eeprom_emulator_write_page(0, buffer) != STATUS_OK)
+    return -1;
+
+  return eeprom_emulator_commit_page_buffer() == STATUS_OK ? 0 : -1;
 }
 
 /**
@@ -133,21 +141,23 @@ int eeprom_fuses_set(void)
   NVMCTRL->CTRLB.reg = temp | NVMCTRL_CTRLB_CACHEDIS;
 
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
-  NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
+  NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS / 2;
 
   // erase the user page
   NVMCTRL->CTRLA.reg = NVM_COMMAND_ERASE_AUX_ROW | NVMCTRL_CTRLA_CMDEX_KEY;
+
   while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY));
 
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
-  NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
+  NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS / 2;
 
   // clear the page buffer before staging new data
   NVMCTRL->CTRLA.reg = NVM_COMMAND_PAGE_BUFFER_CLEAR | NVMCTRL_CTRLA_CMDEX_KEY;
+
   while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY));
 
   NVMCTRL->STATUS.reg |= NVMCTRL_STATUS_MASK;
-  NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS/2;
+  NVMCTRL->ADDR.reg = NVMCTRL_AUX0_ADDRESS / 2;
 
   // stage updated fuse bits
   *((uint32_t *)NVMCTRL_AUX0_ADDRESS) = data[0];
@@ -160,4 +170,5 @@ int eeprom_fuses_set(void)
   NVMCTRL->CTRLB.reg = temp;
 
   NVIC_SystemReset();
+  return -1;
 }

@@ -72,7 +72,7 @@ static const leds_cfg_t leds_cfg[] =
   struct tc_config config_tc;
   tc_get_config_defaults(&config_tc);
 
-  for(uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
+  for (uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
   {
     config_tc.counter_size           = TC_COUNTER_SIZE_16BIT;
     config_tc.wave_generation        = TC_WAVE_GENERATION_NORMAL_PWM;
@@ -94,7 +94,7 @@ void leds_sequence(void)
   uint8_t duty;
   uint8_t duty_lim;
 
-  for(int j = 0; j < 400; j++)
+  for (int j = 0; j < 400; j++)
   {
     duty = (j + 0) % 200;
     duty_lim = (duty > 100) ? (200 - duty) : duty;
@@ -112,7 +112,7 @@ void leds_off(void)
 {
   const uint32_t cc_0_ppt = 0;
 
-  for(uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
+  for (uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
   {
     tc_set_compare_value(&tc_instances[i], leds_cfg[i].chnl, cc_0_ppt);
   }
@@ -123,7 +123,7 @@ void leds_on(void)
 {
   const uint32_t cc_100_ppt = (CAPTURE_VALUE);
 
-  for(uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
+  for (uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
   {
     tc_set_compare_value(&tc_instances[i], leds_cfg[i].chnl, cc_100_ppt);
   }
@@ -138,14 +138,14 @@ void leds_blink_leds(uint32_t ms)
   const uint32_t cc_100_ppt = (CAPTURE_VALUE);
   const uint32_t cc_0_ppt = 0;
 
-  for(uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
+  for (uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
   {
     tc_set_compare_value(&tc_instances[i], leds_cfg[i].chnl, cc_100_ppt);
   }
 
   sw_timer_delay_ms(ms / 2);
 
-  for(uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
+  for (uint8_t i = 0; i < (uint8_t)LEDS_NUM; i++)
   {
     tc_set_compare_value(&tc_instances[i], leds_cfg[i].chnl, cc_0_ppt);
   }
@@ -163,7 +163,7 @@ void leds_blink_led(leds_t led, uint32_t ms)
   const uint32_t cc_100_ppt = (CAPTURE_VALUE);
   const uint32_t cc_0_ppt = 0;
 
-  if(led < LEDS_NUM)
+  if ((uint32_t)led < (uint32_t)LEDS_NUM)
   {
     tc_set_compare_value(&tc_instances[led], leds_cfg[led].chnl, cc_100_ppt);
     sw_timer_delay_ms(ms / 2);
@@ -180,9 +180,9 @@ void leds_blink_led(leds_t led, uint32_t ms)
  */
 void leds_blink_leds_num(leds_t led, uint32_t num, uint32_t ms)
 {
-  for(uint32_t num_l = 0; num_l < num; num_l++)
+  for (uint32_t num_l = 0; num_l < num; num_l++)
   {
-    if(led <= LEDS_NUM)
+    if ((uint32_t)led <= (uint32_t)LEDS_NUM)
     {
       switch (led)
       {
@@ -205,8 +205,11 @@ void leds_blink_leds_num(leds_t led, uint32_t num, uint32_t ms)
  */
 void leds_set_led_duty(leds_t led, uint8_t duty_ppt)
 {
-  if(led < LEDS_NUM)
+  if ((uint32_t)led < (uint32_t)LEDS_NUM)
   {
+    if (duty_ppt > 100u)
+      duty_ppt = 100u;
+
     uint32_t cc = (CAPTURE_VALUE / 100uL) * duty_ppt;
     tc_set_compare_value(&tc_instances[(uint8_t)led], leds_cfg[(uint8_t)led].chnl, cc);
   }

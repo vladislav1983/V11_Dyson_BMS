@@ -12,3 +12,6 @@
 *.log
 V11_BMS/Release/
 V11_BMS/build_release/
+V11_BMS/build-os/
+V11_BMS/build-release/
+V11_BMS/build/Testing/Temporary/CTestCostData.txt

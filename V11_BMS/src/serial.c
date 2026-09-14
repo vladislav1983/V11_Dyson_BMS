@@ -50,6 +50,7 @@ void SERCOM2_Handler_BMS(void)
   {
     uint8_t data = (uint8_t)hw->DATA.reg;
     uint8_t next = (rx_ring_head + 1) & SERIAL_RX_BUF_MASK;
+
     if (next != rx_ring_tail)
     {
       rx_ring[rx_ring_head] = data;
@@ -107,7 +108,7 @@ void serial_init()
  */
 bool serial_rx_byte(uint8_t *ch)
 {
-  if (rx_ring_tail == rx_ring_head)
+  if (ch == NULL || rx_ring_tail == rx_ring_head)
     return false;
 
   *ch = rx_ring[rx_ring_tail];
@@ -126,7 +127,7 @@ bool serial_rx_available(void)
  * @param buff_ptr   TX buffer
  * @param buff_size  bytes to send
  */
-void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
+void serial_send(uint8_t *buff_ptr, uint8_t buff_size)
 {
   SercomUsart *const hw = &(usart_instance.hw->USART);
 
@@ -138,6 +139,7 @@ void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
   hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
                    SERCOM_USART_STATUS_PERR |
                    SERCOM_USART_STATUS_BUFOVF;
+
   if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_RXC)
     (void)hw->DATA.reg;
 
@@ -149,6 +151,7 @@ void serial_send(uint8_t* buff_ptr, uint8_t buff_size)
   hw->STATUS.reg = SERCOM_USART_STATUS_FERR |
                    SERCOM_USART_STATUS_PERR |
                    SERCOM_USART_STATUS_BUFOVF;
+
   if (hw->INTFLAG.reg & SERCOM_USART_INTFLAG_RXC)
     (void)hw->DATA.reg;
 

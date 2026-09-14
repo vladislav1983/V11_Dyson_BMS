@@ -10,6 +10,8 @@
 -----------------------------------------------------------------------------*/
 #include "bms_adc.h"
 
+#define BMS_ADC_BUSY_LIMIT  65535u
+
 /*-----------------------------------------------------------------------------
     DEFINITION OF GLOBAL VARIABLES
 -----------------------------------------------------------------------------*/
@@ -33,7 +35,6 @@
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL VARIABLES
 -----------------------------------------------------------------------------*/
-static uint16_t adc_result[BMS_ADC_CH_NUM] = {0};
 static struct adc_module adc_instance;
 
 /*-----------------------------------------------------------------------------
@@ -56,7 +57,7 @@ static const enum adc_positive_input adc_ch_map_cfg[BMS_ADC_CH_NUM] =
  * @brief initialise the ADC, 12-bit single-shot, internal VCC/1.48 reference,
  *        ADC interrupts are hard-disabled
  */
-void bms_adc_init(void)
+bool bms_adc_init(void)
 {
   struct adc_config config_adc;
 
@@ -71,13 +72,15 @@ void bms_adc_init(void)
   // any channel works as the initial mux, the first conversion picks one
   config_adc.positive_input  = ADC_POSITIVE_INPUT_PIN7;
 
-  adc_init(&adc_instance, ADC, &config_adc);
+  if (adc_init(&adc_instance, ADC, &config_adc) != STATUS_OK)
+    return false;
 
   // force-disable ADC interrupts
   ADC->INTENCLR.reg = ADC_INTENCLR_MASK;
   ADC->INTFLAG.reg  = ADC_INTFLAG_MASK;
 
   adc_enable(&adc_instance);
+  return true;
 }
 
 /**
@@ -89,77 +92,26 @@ uint16_t adc_convert_channel(bms_adc_ch_t ch)
 {
   enum status_code status;
   uint16_t result = 0xFFFF;
+  uint16_t busy_count = 0;
 
-  if(ch < BMS_ADC_CH_NUM)
+  if ((uint32_t)ch >= (uint32_t)BMS_ADC_CH_NUM)
+    return 0xFFFF;
+
+  enum adc_positive_input ch_mux = adc_ch_map_cfg[ch];
+
+  adc_set_positive_input(&adc_instance, ch_mux);
+  adc_start_conversion(&adc_instance);
+
+  do
   {
-    enum adc_positive_input ch_mux = adc_ch_map_cfg[ch];
+    status = adc_read(&adc_instance, &result);
+    busy_count++;
+  } while (status == STATUS_BUSY && busy_count < BMS_ADC_BUSY_LIMIT);
 
-    adc_set_positive_input(&adc_instance, ch_mux);
-    adc_start_conversion(&adc_instance);
-
-    do
-    {
-      status = adc_read(&adc_instance, &result);
-    } while (status == STATUS_BUSY);
-
-    if(status != STATUS_OK)
-    {
-      result = 0xFFFF;
-    }
-
-    adc_result[ch] = result;
-  }
+  if (status != STATUS_OK)
+    return 0xFFFF;
 
   return result;
-}
-
-/**
- * @brief convert every configured channel and cache the results,
- *        read them back with bms_adc_read_ch()
- */
-void adc_convert_channels(void)
-{
-  enum status_code status;
-  uint16_t result;
-
-  for(uint16_t i = 0; i < (uint16_t)BMS_ADC_CH_NUM; i++)
-  {
-    enum adc_positive_input ch_mux = adc_ch_map_cfg[i];
-
-    adc_set_positive_input(&adc_instance, ch_mux);
-    adc_start_conversion(&adc_instance);
-
-    do
-    {
-      status = adc_read(&adc_instance, &result);
-    } while (status == STATUS_BUSY);
-
-    if(status == STATUS_OK)
-    {
-      adc_result[i] = result;
-    }
-    else
-    {
-      adc_result[i] = 0xFFFF;
-    }
-  }
-}
-
-/**
- * @brief read the last cached ADC result for a channel
- * @param ch  ADC channel
- * @return    cached 12-bit value, or 0xFFFF on invalid channel
- */
-uint16_t bms_adc_read_ch(bms_adc_ch_t ch)
-{
-  uint16_t adc_ch_value = 0xFFFF;
-
-  if(ch < BMS_ADC_CH_NUM)
-  {
-    adc_ch_value = adc_result[ch];
-  }
-
-  return adc_ch_value;
 }
 
 /*-----------------------------------------------------------------------------

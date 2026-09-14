@@ -38,7 +38,7 @@
 //    DECLARATION OF LOCAL MACROS/#DEFINES
 //-----------------------------------------------------------------------------
 
-#ifdef PROT_DEBUG_PRINT
+#if PROT_DEBUG_PRINT
 #include "serial_debug.h"
 #define DSN_PRINT(...) \
   { \
@@ -79,17 +79,16 @@
                             ((uint32_t)(buf)[2] << 16) | ((uint32_t)(buf)[3] << 24))
 
 #define HTOLE16(buf, val)   do { (buf)[0] = (uint8_t)( (val)       & 0xFF); \
-                                 (buf)[1] = (uint8_t)(((val) >> 8) & 0xFF); } while(0)
+                                 (buf)[1] = (uint8_t)(((val) >> 8) & 0xFF); } while (0)
 
 #define HTOLE32(buf, val)   do { (buf)[0] = (uint8_t)((val) >>  0); \
                                  (buf)[1] = (uint8_t)((val) >>  8); \
                                  (buf)[2] = (uint8_t)((val) >> 16); \
-                                 (buf)[3] = (uint8_t)((val) >> 24); } while(0)
+                                 (buf)[3] = (uint8_t)((val) >> 24); } while (0)
 
 // buffer sizes
 #define RX_BUF_SIZE             128
 #define TX_BUF_SIZE             160
-#define MAX_RESPONSE_FRAME      140    // max response frame (SIZE+3)
 #define MAX_RESPONSE_PAYLOAD    120    // max payload bytes in response
 
 // protocol timing
@@ -102,6 +101,7 @@
 // TLV pair IDs used in analyze_frame response logic
 #define PAIR_TLV_READ           0x1002
 #define PAIR_TLV_READ_RES       0x1001
+#define PAIR_MASKED_WRITE       0x8216
 
 // TLV register keys: (TYPE << 8) | REG
 #define TLV_TRIGGER_STATE       0x8100   // 1 byte: trigger on/off
@@ -110,6 +110,8 @@
 #define TLV_RUNTIME             0x2202   // 4 bytes: seconds (aliased from 0x22)
 #define TLV_SOC2                0x8105   // 2 bytes: filtered SOC percent * 100
 #define TLV_BMS_STATUS          0x8106   // 1 byte: status enum
+#define TLV_CELL_V_FIRST        0x2301   // 2 bytes each: cell 1 voltage mV
+#define TLV_CELL_V_LAST         (TLV_CELL_V_FIRST + PACK_CELL_COUNT - 1u)
 #define TLV_MAX_CELL_V          0x250B   // 2 bytes: max pack cell mV
 #define TLV_MIN_CELL_V          0x250C   // 2 bytes: min pack cell mV
 #define TLV_MIN_PACK_V          0x8114   // 2 bytes: min pack voltage mV
@@ -119,11 +121,9 @@
 #define TLV_WAKEUP_SOURCE       0x810A   // 1 byte: wakeup source
 
 // handshake configuration
-#define HANDSHAKE_NUM_CELLS     7
 #define HANDSHAKE_MIN_CELL_MV   2650
 #define HANDSHAKE_MAX_CELL_MV   4200
 #define V11_BATTERY_TYPE        0x001F
-#define V11_CAPACITY_001MAH     (PACK_MAX_CAPACITY_MAH * 100u)  // in 0.01 mAh units
 
 // firmware version string (22 bytes, queried by pair 0x0306)
 #define FW_VERSION_STR_LEN      22
@@ -190,6 +190,8 @@ static sw_timer    motor_speed_timer;
 static bool        motor_speed_seen;
 static bool        handshake_key_seen;
 static uint32_t    wakeup_source;
+static uint16_t   *tlv_cell_voltages;
+static bool        tlv_cells_loaded;
 
 //-----------------------------------------------------------------------------
 //    DEFINITION OF LOCAL FUNCTIONS PROTOTYPES
@@ -203,9 +205,10 @@ static uint8_t  frame_compute_hdr_crc8(const uint8_t *buf);
 
 static bool     rx_byte_handler(uint8_t ch);
 static bool     process_rx_frame(void);
-static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class);
+static uint16_t analyze_frame(proc_ctx_t *ctx);
 static bool     dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, uint16_t out_size, uint16_t *out_len);
 static bool     dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len);
+static bool     load_tlv_cell_voltages(void);
 static void     build_trigger_response(uint8_t *out_data, uint16_t *out_len);
 static void     handle_sleep(void);
 
@@ -235,6 +238,7 @@ void dsn_prot_init(void)
 void dsn_prot_set_trigger(bool state)
 {
   trigger_state = state;
+
   if (state)
     pending_sleep = false;
 }
@@ -268,7 +272,10 @@ void dsn_prot_mainloop(void)
   if (sw_timer_is_elapsed(&session_timer, SESSION_TIMEOUT_MS))
   {
     if (vacuum_connected)
-      bq7693_disable_discharge();
+    {
+      if (!bq7693_disable_discharge())
+        bms_force_fault(BMS_ERR_I2C_FAIL);
+    }
     vacuum_connected = false;
   }
 
@@ -312,12 +319,14 @@ void dsn_prot_mainloop(void)
       }
 
       // motor-speed watchdog: nothing for a while → vacuum is gone
-      if (   motor_speed_seen
-          && sw_timer_is_elapsed(&motor_speed_timer, MOTOR_SPEED_WDT_MS))
+      if (motor_speed_seen &&
+          sw_timer_is_elapsed(&motor_speed_timer, MOTOR_SPEED_WDT_MS))
       {
         DSN_PRINT("PROT:MS_WDT\r\n");
         port_pin_set_output_level(PRECHARGE_PIN, false);
-        bq7693_disable_discharge();
+
+        if (!bq7693_disable_discharge())
+          bms_force_fault(BMS_ERR_I2C_FAIL);
         vacuum_connected = false;
         motor_speed_seen = false;
         sw_timer_start(&session_timer);
@@ -370,9 +379,9 @@ void dsn_prot_mainloop(void)
 
     //------------------------------------------------------------------------
     case DSN_SLEEP:
-      if (     dio_read(DIO_MODE_BUTTON)
-           ||  dio_read(DIO_TRIGGER_PRESSED)
-           || (charger_at_sleep && !dio_read(DIO_CHARGER_CONNECTED)))
+      if (dio_read(DIO_MODE_BUTTON) ||
+          dio_read(DIO_TRIGGER_PRESSED) ||
+          (charger_at_sleep && !dio_read(DIO_CHARGER_CONNECTED)))
       {
         dsn_state = DSN_INIT;
       }
@@ -471,6 +480,7 @@ static void frame_unstuff(uint8_t *buf, uint8_t *len)
       buf[dst++] = buf[src];
     }
   }
+
   *len = dst;
 }
 
@@ -482,13 +492,10 @@ static void frame_unstuff(uint8_t *buf, uint8_t *len)
  */
 static bool frame_verify_hdr_crc8(const uint8_t *buf, uint8_t len)
 {
-  uint8_t expected;
-
   if (len < 4)
     return false;
 
-  expected = calc_crc8(&buf[OFF_SIZE_LO], 2);
-  return (expected == buf[OFF_HDR_CRC8]);
+  return calc_crc8(&buf[OFF_SIZE_LO], 2) == buf[OFF_HDR_CRC8];
 }
 
 /**
@@ -535,11 +542,11 @@ static void frame_append_crc32(uint8_t *buf)
  */
 static uint8_t frame_stuff(uint8_t *buf, uint8_t frame_len, uint8_t buf_size)
 {
-  uint8_t extra = 0;
-  uint8_t total;
-  uint8_t dst;
+  uint16_t extra = 0;
+  uint16_t total;
+  uint16_t dst;
   uint8_t i;
-  int8_t  src;
+  int16_t src;
 
   if (frame_len < 2)
     return 0;
@@ -550,15 +557,14 @@ static uint8_t frame_stuff(uint8_t *buf, uint8_t frame_len, uint8_t buf_size)
       extra++;
   }
 
-  // start delimiter + frame + stuffing overhead + end delimiter
   total = 1 + frame_len + extra + 1;
+
   if (total > buf_size)
     return 0;
 
   dst = (total - 1);
-  buf[dst--] = FRAME_DELIM;  // end delimiter
+  buf[dst--] = FRAME_DELIM;
 
-  // walk the source backwards so we don't overwrite unread bytes
   for (src = (frame_len - 1); src >= 0; src--)
   {
     if (buf[src] == FRAME_DELIM)
@@ -576,9 +582,9 @@ static uint8_t frame_stuff(uint8_t *buf, uint8_t frame_len, uint8_t buf_size)
       buf[dst--] = buf[src];
     }
   }
+  buf[0] = FRAME_DELIM;
 
-  buf[0] = FRAME_DELIM;  // start delimiter
-  return total;
+  return (uint8_t)total;
 }
 
 /**
@@ -602,7 +608,7 @@ static bool process_rx_frame(void)
     return false;
   }
 
-  // check the SIZE field matches the actual frame length
+  // check the size field matches the actual frame length
   size = LE16TOH(&rx_buf[OFF_SIZE_LO]);
 
   if (size < 8 || rx_level != (size + OFF_DIR))
@@ -621,6 +627,7 @@ static bool process_rx_frame(void)
   if (rx_buf[OFF_SRC] == 0xFF)
   {
     payload_len = size - FRAME_HDR_OVERHEAD - 4;
+
     if (payload_len >= 4)
     {
       const uint8_t *p = &rx_buf[OFF_PAYLOAD];
@@ -659,10 +666,12 @@ static bool process_rx_frame(void)
   ctx.out_remaining = MAX_RESPONSE_PAYLOAD;
 
   handshake_key_seen = false;
+  tlv_cell_voltages = NULL;
+  tlv_cells_loaded = false;
 
-  resp_payload_len = analyze_frame(&ctx, req_class);
+  resp_payload_len = analyze_frame(&ctx);
 
-  // the startup-only TLV_MAX_PACK_V query completes the handshake
+  // the startup battery-type query completes the handshake
   if (!vacuum_connected && handshake_key_seen)
   {
     DSN_PRINT("PROT:HS\r\n");
@@ -675,7 +684,7 @@ static bool process_rx_frame(void)
     return false;
   }
 
-  // SIZE = payload + 4-byte in-frame header + 4-byte CRC32
+  // size = payload + 4-byte in-frame header + 4-byte CRC32
   resp_size = resp_payload_len + 4 + 4;
   HTOLE16(&tx_buf[OFF_SIZE_LO], resp_size);
 
@@ -698,10 +707,9 @@ static bool process_rx_frame(void)
 /**
  * @brief  walk the TLV pair payload, dispatch each pair and write the response
  * @param  ctx        processing context (in/out cursors)
- * @param  req_class  request class from the frame header
  * @return bytes written to the response payload
  */
-static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
+static uint16_t analyze_frame(proc_ctx_t *ctx)
 {
   uint16_t total_written = 0;
   uint16_t pair;
@@ -711,21 +719,16 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
   uint16_t needed;
   uint16_t resp_pair;
 
-  (void)req_class;
-
-  if (ctx->in_remaining == 0)
+  if (ctx->in_remaining == 0 || ctx->out_remaining == 0)
     return 0;
 
   // echo the rolling counter (first byte of payload) into the response
-  if (ctx->out_remaining > 0)
-  {
-    *ctx->out_ptr = *ctx->in_ptr;
-    ctx->out_ptr++;
-    ctx->out_remaining--;
-    ctx->in_ptr++;
-    ctx->in_remaining--;
-    total_written++;
-  }
+  *ctx->out_ptr = *ctx->in_ptr;
+  ctx->out_ptr++;
+  ctx->out_remaining--;
+  ctx->in_ptr++;
+  ctx->in_remaining--;
+  total_written++;
 
   // pair loop: read the 2-byte pair ID, dispatch, append response
   while (ctx->in_remaining >= 2 && ctx->out_remaining >= 2)
@@ -745,12 +748,22 @@ static uint16_t analyze_frame(proc_ctx_t *ctx, uint8_t req_class)
       break;
     }
 
-    if (resp_len == 0)
+    if (pair == PAIR_MASKED_WRITE)
     {
-      continue;                             // silent ack
+      if (ctx->out_remaining < 2)
+        break;
+      HTOLE16(ctx->out_ptr, 0x0001);
+      ctx->out_ptr       += 2;
+      ctx->out_remaining -= 2;
+      total_written      += 2;
+      continue;
     }
 
+    if (resp_len == 0)
+      continue;                             // silent ack
+
     needed = 2 + resp_len;
+
     if (ctx->out_remaining < needed)
       break;
 
@@ -807,10 +820,11 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       in_ctx->in_ptr       += 1;
       in_ctx->in_remaining -= 1;
 
-      if (out_size < 1)
-        return true;
-      out_data[0] = in[0];
-      *out_len = 1;
+      if (out_size >= 1)
+      {
+        out_data[0] = in[0];
+        *out_len = 1;
+      }
       return true;
 
     //---------------------------------------------------------------------------------------------
@@ -822,16 +836,12 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       in = in_ctx->in_ptr;
       in_ctx->in_ptr       += 2;
       in_ctx->in_remaining -= 2;
-
       reg  = in[0];
       type = in[1];
       key = ((uint16_t)type << 8) | reg;
-
       val_len = 0;
-      if (!dispatch_tlv_read(key, val_buf, &val_len))
-        return true;   // unknown register — skip
 
-      if (out_size < 4 + val_len)
+      if (!dispatch_tlv_read(key, val_buf, &val_len) || out_size < 4 + val_len)
         return true;
 
       // output format: [REG] [TYPE] [LEN_LO] [LEN_HI] [DATA...]
@@ -846,6 +856,7 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
     // FW_VERSION_STR: [0x06 0x03] [OFFSET] [REQ_LEN] -> [0x07 0x03] [ACTUAL_LEN] [DATA...]
     case 0x0306:
     {
+      uint8_t offset;
       uint8_t req_len;
 
       if (in_ctx->in_remaining < 2)
@@ -854,24 +865,28 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       in = in_ctx->in_ptr;
       in_ctx->in_ptr       += 2;
       in_ctx->in_remaining -= 2;
-
+      offset = in[0];
       req_len = in[1];
 
-      if (req_len > FW_VERSION_STR_LEN)
-        req_len = FW_VERSION_STR_LEN;
+      if (offset >= FW_VERSION_STR_LEN)
+        req_len = 0;
+      else if (req_len > FW_VERSION_STR_LEN - offset)
+        req_len = FW_VERSION_STR_LEN - offset;
 
-      if (1 + req_len > out_size)
-        return true;
+      if (1 + req_len <= out_size)
+      {
+        out_data[0] = req_len;
 
-      out_data[0] = req_len;
-      memcpy(&out_data[1], fw_version_str, req_len);
-      *out_len = 1 + req_len;
+        if (req_len > 0)
+          memcpy(&out_data[1], &fw_version_str[offset], req_len);
+        *out_len = 1 + req_len;
+      }
       return true;
     }
 
     //---------------------------------------------------------------------------------------------
-    // BMS_MASKED_WRITE: [0x16 0x82] [VAL_LO] [VAL_HI] [MASK_LO] [MASK_HI] -> silent ack
-    case 0x8216:
+    // BMS_MASKED_WRITE: [0x16 0x82] [VAL_LO] [VAL_HI] [MASK_LO] [MASK_HI] -> raw 0x0001 ack
+    case PAIR_MASKED_WRITE:
       if (in_ctx->in_remaining < 4)
         return false;
 
@@ -893,7 +908,6 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       in = in_ctx->in_ptr;
       in_ctx->in_ptr       += 4;
       in_ctx->in_remaining -= 4;
-
       last_motor_speed = LE32TOH(in);
       motor_speed_seen = true;
       sw_timer_start(&motor_speed_timer);
@@ -901,9 +915,8 @@ static bool dispatch_pair(proc_ctx_t *in_ctx, uint16_t pair, uint8_t *out_data, 
       if (last_motor_speed == MOTOR_SPEED_OFF)
         pending_sleep = true;
 
-      if (out_size < 6)
-        return true;
-      build_trigger_response(out_data, out_len);
+      if (out_size >= 6)
+        build_trigger_response(out_data, out_len);
       return true;
 
     //---------------------------------------------------------------------------------------------
@@ -923,6 +936,16 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
   uint32_t val32;
 
   *out_len = 0;
+
+  if (key >= TLV_CELL_V_FIRST && key <= TLV_CELL_V_LAST)
+  {
+    if (!load_tlv_cell_voltages())
+      return false;
+
+    HTOLE16(out_data, tlv_cell_voltages[key - TLV_CELL_V_FIRST]);
+    *out_len = 2;
+    return true;
+  }
 
   switch (key)
   {
@@ -963,25 +986,47 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
       return true;
 
     case TLV_MAX_CELL_V:  // 0x250B: max cell voltage mV
-      HTOLE16(out_data, HANDSHAKE_MAX_CELL_MV);
+      if (!load_tlv_cell_voltages())
+        return false;
+
+      val = tlv_cell_voltages[0];
+
+      for (uint8_t i = 1; i < PACK_CELL_COUNT; ++i)
+      {
+        if (tlv_cell_voltages[i] > val)
+          val = tlv_cell_voltages[i];
+      }
+
+      HTOLE16(out_data, val);
       *out_len = 2;
       return true;
 
     case TLV_MIN_CELL_V:  // 0x250C: min cell voltage mV
-      HTOLE16(out_data, HANDSHAKE_MIN_CELL_MV);
+      if (!load_tlv_cell_voltages())
+        return false;
+
+      val = tlv_cell_voltages[0];
+
+      for (uint8_t i = 1; i < PACK_CELL_COUNT; ++i)
+      {
+        if (tlv_cell_voltages[i] < val)
+          val = tlv_cell_voltages[i];
+      }
+
+      HTOLE16(out_data, val);
       *out_len = 2;
       return true;
 
     case TLV_MIN_PACK_V:  // 0x8114: min pack voltage mV
-      HTOLE16(out_data, HANDSHAKE_MIN_CELL_MV * HANDSHAKE_NUM_CELLS);
+      HTOLE16(out_data, HANDSHAKE_MIN_CELL_MV * PACK_CELL_COUNT);
       *out_len = 2;
       return true;
 
     case TLV_MAX_PACK_V:  // 0x8115: max pack voltage mV
-      HTOLE16(out_data, HANDSHAKE_MAX_CELL_MV * HANDSHAKE_NUM_CELLS);
+      HTOLE16(out_data, HANDSHAKE_MAX_CELL_MV * PACK_CELL_COUNT);
       *out_len = 2;
       return true;
-      
+
     case TLV_BATTERY_TYPE:  // 0x8102: battery type ID
       val = V11_BATTERY_TYPE;
       HTOLE16(out_data, val);
@@ -997,7 +1042,7 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
       return true;
 
     case TLV_FULL_CHARGE_CAP:  // 0x0201: full charge capacity (0.01 mAh)
-      val32 = V11_CAPACITY_001MAH;
+      val32 = bms_get_full_charge_capacity_001mah();
       HTOLE32(out_data, val32);
       *out_len = 4;
       return true;
@@ -1005,6 +1050,21 @@ static bool dispatch_tlv_read(uint16_t key, uint8_t *out_data, uint16_t *out_len
     default:
       return false;
   }
+}
+
+/** @brief load all seven cell voltages at most once while processing a frame */
+static bool load_tlv_cell_voltages(void)
+{
+  if (!tlv_cells_loaded)
+  {
+    tlv_cell_voltages = bq7693_get_cell_voltages();
+    tlv_cells_loaded = true;
+
+    if (tlv_cell_voltages == NULL)
+      bms_force_fault(BMS_ERR_I2C_FAIL);
+  }
+
+  return tlv_cell_voltages != NULL;
 }
 
 /**
@@ -1040,9 +1100,14 @@ static void handle_sleep(void)
   sleep_flag       = true;
   vacuum_connected = false;
   charger_at_sleep = dio_read(DIO_CHARGER_CONNECTED);
-  bq7693_disable_discharge();
+
+  if (!bq7693_disable_discharge())
+    bms_force_fault(BMS_ERR_I2C_FAIL);
+
   port_pin_set_output_level(PRECHARGE_PIN, false);
   port_pin_set_output_level(MODE_BUTTON_PULLUP_ENABLE_PIN, false);
+  // restart the 512 ms watchdog window before the intentional 300 ms blocking delay
+  wdt_reset_count();
   delay_ms(300);
   dsn_state = DSN_SLEEP;
   DSN_PRINT("PROT:SLEEP\r\n");

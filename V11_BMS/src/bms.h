@@ -52,6 +52,8 @@ enum BMS_ERROR_CODE
   BMS_ERR_I2C_FAIL,        // 9  BQ7693 I²C communication failure
   BMS_ERR_WDT,             // 10 watchdog early warning fired (main loop stalled)
   BMS_ERR_CELL_IMBALANCE,  // 11 cell spread exceeded CELL_IMBALANCE_FAULT_MV
+  BMS_ERR_SENSOR_FAIL,     // 12 invalid ADC/NTC measurement
+  BMS_ERR_EEPROM_FAIL,     // 13 EEPROM read/write failure
 };
 
 /*-----------------------------------------------------------------------------
@@ -69,15 +71,15 @@ enum BMS_ERROR_CODE
 /*-----------------------------------------------------------------------------
   DECLARATION OF GLOBAL FUNCTIONS
 -----------------------------------------------------------------------------*/
- extern void bms_init(void);
- extern void bms_mainloop(void);
- extern void bms_force_fault(enum BMS_ERROR_CODE code);
- extern uint16_t bms_get_soc_x100(void);
- extern uint32_t bms_get_runtime_seconds(void);
- extern void bms_wakeup_interrupt_callback(void);
- extern void bms_interrupt_callback(void) ;
- extern void bms_interrupt_process(void);
-
+extern void bms_init(void);
+extern void bms_mainloop(void);
+extern void bms_force_fault(enum BMS_ERROR_CODE code);
+extern uint16_t bms_get_soc_x100(void);
+extern uint32_t bms_get_runtime_seconds(void);
+extern uint32_t bms_get_full_charge_capacity_001mah(void);
+extern void bms_wakeup_interrupt_callback(void);
+extern void bms_interrupt_callback(void);
+extern void bms_interrupt_process(void);
 
 /*-----------------------------------------------------------------------------
   END OF MODULE DEFINITION FOR MULTIPLE INCLUSION
