@@ -67,10 +67,10 @@ set(COMMON_C_FLAGS
 
 add_compile_options(${COMMON_C_FLAGS})
 
-# Debug:   -Og, debug symbols
+# Debug:   -Os to fit the flash region, with debug symbols
 # Release: -Os, no debug symbols
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_options(-Og -g3)
+    add_compile_options(-Os -g3)
 else()
     add_compile_options(-Os)
     add_compile_definitions(NDEBUG)

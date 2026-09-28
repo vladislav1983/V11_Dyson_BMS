@@ -73,6 +73,7 @@ static sw_timer bms_timer = 0;
 static int16_t  pack_temperature = 0;
 static volatile bool process_bms_interrupt = false;
 static volatile bool bms_fault_pending = false;
+static bool cc_resync_pending = false;
 static volatile bool rtc_wakeup_flag = false;
 static struct rtc_module rtc_instance;
 
@@ -103,6 +104,7 @@ static void    pins_init(void);
 static void    pins_deinit(void);
 static void    interrupts_init(void);
 static bool    bms_read_temperature(int16_t *temperature);
+static bool    bms_resync_cc(void);
 static bool    bms_get_cell_spread_mv(uint16_t *spread);
 static bool    bms_trigger_active(void);
 static bool    bms_factory_reset_check(uint8_t *count, bool *prev_level, sw_timer *timeout);
@@ -186,12 +188,17 @@ void bms_interrupt_process(void)
 {
   uint8_t sys_stat = 0;
 
+  // A failed read or acknowledgement leaves the sample ambiguous until fault recovery.
+  if (cc_resync_pending)
+    return;
+
   if (true == process_bms_interrupt)
   {
     process_bms_interrupt = false;
 
     if (!bq7693_read_register(SYS_STAT, 1, &sys_stat))
     {
+      cc_resync_pending = true;
       bms_force_fault(BMS_ERR_I2C_FAIL);
     }
     else if (sys_stat & 0x80)
@@ -201,6 +208,7 @@ void bms_interrupt_process(void)
 
       if (!bq7693_read_cc(&cc_raw))
       {
+        cc_resync_pending = true;
         bms_force_fault(BMS_ERR_I2C_FAIL);
       }
       else
@@ -238,8 +246,11 @@ void bms_interrupt_process(void)
             eeprom_data.current_charge_level = 0;
         }
 
-        if (!bq7693_write_register(SYS_STAT, 0x80))
+        if (!bq7693_write_register(SYS_STAT, STAT_CC_READY))
+        {
+          cc_resync_pending = true;
           bms_force_fault(BMS_ERR_I2C_FAIL);
+        }
       }
     }
   }
@@ -255,7 +266,7 @@ uint16_t bms_get_soc_x100(void)
   uint32_t current_charge_level = eeprom_data.current_charge_level > 0 ? (uint32_t)eeprom_data.current_charge_level : 0;
   uint32_t total_pack_capacity = eeprom_data.total_pack_capacity > 0 ? (uint32_t)eeprom_data.total_pack_capacity : 0;
 
-  if (bms_error == BMS_ERR_PACK_DISCHARGED)
+  if (bms_error == BMS_ERR_PACK_DISCHARGED || bms_error == BMS_ERR_UNDERVOLTAGE)
     return 0;
 
   if (total_pack_capacity >= 100 && current_charge_level > 0)
@@ -278,8 +289,7 @@ uint32_t bms_get_runtime_seconds(void)
   int32_t runtime = 0;
 
   // only estimate while the motor is running and pulling > 1 A
-  if (bms_state == BMS_VACUUM_RUNNING &&
-      current_filt_mA_abs > 1000)
+  if (bms_state == BMS_VACUUM_RUNNING && current_filt_mA_abs > 1000)
   {
     current_charge_level = (eeprom_data.current_charge_level < 0 || eeprom_data.total_pack_capacity <= 0)
                                ? 0
@@ -309,6 +319,10 @@ void bms_mainloop(void)
 
   while (1)
   {
+    // Services inside state handlers can raise a fault before a normal transition.
+    if (bms_fault_pending)
+      bms_state = BMS_FAULT;
+
     BMS_PRINT("BMS_STATE: %s\r\n", bms_state_names[bms_state]);
 
     switch (bms_state)
@@ -384,6 +398,22 @@ void bms_mainloop(void)
 /*-----------------------------------------------------------------------------
     DEFINITION OF LOCAL FUNCTIONS
 -----------------------------------------------------------------------------*/
+/** @brief discard an ambiguous CC sample and re-arm ALERT before leaving a fault */
+static bool bms_resync_cc(void)
+{
+  if (!cc_resync_pending)
+    return true;
+
+  // CC_READY holds ALERT high until cleared. Do not integrate this sample again:
+  // the original acknowledgement may have failed after the charge was counted.
+  if (!bq7693_write_register(SYS_STAT, STAT_CC_READY))
+    return false;
+
+  cc_resync_pending = false;
+  process_bms_interrupt = true; // also check for a new sample arriving during recovery
+  return true;
+}
+
 /** @brief promote bms_error only if the new code is more severe than the current one */
 static void bms_set_error(enum BMS_ERROR_CODE code)
 {
@@ -1187,6 +1217,12 @@ static void bms_handle_fault(void)
         }
       }
 
+      if (!bms_resync_cc())
+      {
+        bms_force_fault(BMS_ERR_I2C_FAIL);
+        break;
+      }
+
       leds_off();
       leds_blink_leds_num(LEDS_LED_ERR_LEFT, 10, 100);
       bms_state = BMS_IDLE;
@@ -1211,6 +1247,9 @@ static void bms_handle_fault(void)
     {
       bool charger_connected = dio_read(DIO_CHARGER_CONNECTED);
       bool recovered = charger_connected ? bms_is_safe_to_charge(0, NULL) : (auto_recover && bms_is_safe_to_discharge());
+
+      if (recovered)
+        recovered = bms_resync_cc();
 
       if (recovered)
       {

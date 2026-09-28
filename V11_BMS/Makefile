@@ -4,7 +4,7 @@
 BUILD_DIR := build
 CMAKE := cmake
 TOOLCHAIN_FILE := cmake/arm-none-eabi.cmake
-BUILD_TYPE ?= Debug
+BUILD_TYPE ?= Release
 
 # --- Phony targets ---
 .PHONY: all configure build flash debug erase clean
